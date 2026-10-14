@@ -113,6 +113,12 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+// The popup listens for these to show its compact progress card; failures to
+// deliver (popup already closed) must never break an import.
+function reportProgress(payload) {
+  chrome.runtime.sendMessage({ type: "paperlib:progress", ...payload }).catch(() => undefined);
+}
+
 async function warmPdfNavigation(url) {
   // IEEE's AWS WAF allows the same URL as a top-level navigation after the
   // institution session is established, but can reject extension fetch/XHR.
@@ -200,6 +206,9 @@ function startBrowserDownload(url) {
     };
     const onChanged = (delta) => {
       if (id === null || delta.id !== id) return;
+      if (delta.bytesReceived) {
+        reportProgress({ stage: "download", received: delta.bytesReceived.current });
+      }
       if (delta.state?.current === "complete") finish({ kind: "download", id });
       if (delta.state?.current === "interrupted") {
         finish({ kind: "unavailable", error: delta.error?.current || "下载被中断" });
@@ -360,6 +369,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
   }
   const metadata = metadataFrom(info);
   if (!includePdf) {
+    reportProgress({ stage: "import", text: "正在导入文献信息…" });
     const result = await postJson(bridge.settings, "/api/import", { metadata, collection });
     return normalizeServerResult(result.status, result.data);
   }
@@ -377,8 +387,10 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
 
   const fileName = safeFileName(info, pdfUrl);
   let sawLoginPage = false;
+  reportProgress({ stage: "download", text: `正在下载 PDF：${fileName}` });
   const pageDownload = await fetchPdfFromPage(tabId, pdfUrl);
   if (pageDownload?.kind === "pdf") {
+    reportProgress({ stage: "import" });
     const result = await postPdf(bridge.settings, metadata, fileName, pageDownload.buffer, collection);
     return normalizeServerResult(result.status, result.data);
   }
@@ -386,6 +398,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
 
   const workerDownload = await fetchPdfFromWorker(pdfUrl);
   if (workerDownload.kind === "pdf") {
+    reportProgress({ stage: "import" });
     const result = await postPdf(bridge.settings, metadata, fileName, workerDownload.buffer, collection);
     return normalizeServerResult(result.status, result.data);
   }
@@ -396,6 +409,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
     if (warmed) {
       const warmedDownload = await fetchPdfFromWorker(pdfUrl);
       if (warmedDownload.kind === "pdf") {
+        reportProgress({ stage: "import" });
         const result = await postPdf(bridge.settings, metadata, fileName, warmedDownload.buffer, collection);
         return normalizeServerResult(result.status, result.data);
       }
@@ -407,6 +421,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
   // reject fetch/XHR even when the user is authenticated.
   const browserDownload = await downloadPdfAsBrowserNavigation(pdfUrl);
   if (browserDownload.kind === "file") {
+    reportProgress({ stage: "import" });
     const result = await postJson(bridge.settings, "/api/import", {
       metadata,
       collection,
@@ -431,6 +446,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
     const openAccessDownload = await fetchPdfFromWorker(openAccessUrl);
     if (openAccessDownload.kind === "pdf") {
       const oaFileName = safeFileName(info, openAccessUrl);
+      reportProgress({ stage: "import" });
       const result = await postPdf(bridge.settings, metadata, oaFileName, openAccessDownload.buffer, collection);
       return normalizeServerResult(result.status, result.data);
     }
@@ -438,6 +454,7 @@ async function importCurrentPaper(info, includePdf, tabId, collection = "") {
 
   // Obsidian gets one final chance for genuinely public URLs. It intentionally
   // has no browser cookies, so an HTML response becomes a login prompt.
+  reportProgress({ stage: "import" });
   const fallback = await postJson(bridge.settings, "/api/import", { metadata, collection, pdfUrl, fileName });
   const normalizedFallback = normalizeServerResult(fallback.status, fallback.data);
   if (normalizedFallback.ok) return normalizedFallback;
@@ -467,6 +484,8 @@ async function lookupCurrentPaper(info) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+  // Progress events originate here; never route them back into importCurrentPaper.
+  if (message?.type === "paperlib:progress") return false;
   if (message?.type === "paperlib:ping") {
     requireBridge().then((bridge) => respond(bridge.error || {
       ok: true,

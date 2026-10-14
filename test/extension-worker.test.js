@@ -41,7 +41,7 @@ function event() {
 }
 
 function makeWorker(options = {}) {
-  const calls = { fetch: [], page: [], downloads: [], searches: [], tabs: [], removedTabs: [] };
+  const calls = { fetch: [], page: [], downloads: [], searches: [], tabs: [], removedTabs: [], progress: [] };
   const unexpected = [];
   const onChanged = event();
   const onUpdated = event();
@@ -54,7 +54,7 @@ function makeWorker(options = {}) {
       paperlibToken: options.token === undefined ? " test-token " : options.token,
       paperlibPort: 24568
     }) } },
-    runtime: { onMessage: { addListener: (handler) => { listener = handler; } } },
+    runtime: { onMessage: { addListener: (handler) => { listener = handler; } }, sendMessage: async (message) => { calls.progress.push(message); } },
     tabs: {
       onUpdated,
       sendMessage: async (tabId, message) => {
@@ -73,6 +73,7 @@ function makeWorker(options = {}) {
         calls.downloads.push({ ...details });
         if (options.download === "complete" || options.download === "interrupted") {
           callback(99);
+          queueMicrotask(() => onChanged.emit({ id: 99, bytesReceived: { current: 512 } }));
           queueMicrotask(() => onChanged.emit({
             id: 99, state: { current: options.download }, error: { current: "NETWORK_FAILED" }
           }));
@@ -146,6 +147,8 @@ function makeWorker(options = {}) {
         assert.deepEqual(unexpected, [], "all fetches must use known mocks");
         assert.equal(onChanged.listeners.size, 0, "download listeners must be removed");
         assert.equal(onUpdated.listeners.size, 0, "navigation listeners must be removed");
+        assert.ok(calls.progress.every((message) => message.type === "paperlib:progress"),
+          "progress reporting must never leak other payloads");
       }
     }
   };
@@ -261,6 +264,25 @@ test("browser-download filePath JSON retains destination and cleanup", async () 
   assert.equal(Object.hasOwn(payload, "pdfUrl"), false);
   assert.deepEqual(worker.calls.downloads, [{ url: PDF_URL, saveAs: false, conflictAction: "uniquify" }]);
   assert.deepEqual(worker.calls.searches, [{ id: 99 }]);
+  assert.deepEqual(worker.calls.progress.map((message) => message.stage),
+    ["download", "download", "import"], "download bytes and import handoff must be reported");
+});
+
+test("popup progress stages cover binary, metadata, and fallback transports", async () => {
+  const envelopeWorker = makeWorker({ page: { ok: true, base64: PDF_BYTES.toString("base64") } });
+  assert.equal((await envelopeWorker.message(importMessage())).ok, true);
+  assert.deepEqual(envelopeWorker.calls.progress.map((message) => [message.stage, Boolean(message.text)]),
+    [["download", true], ["import", false]]);
+
+  const metadataWorker = makeWorker();
+  await metadataWorker.message(importMessage({ includePdf: false }));
+  assert.deepEqual(metadataWorker.calls.progress.map((message) => message.stage), ["import"]);
+  assert.match(metadataWorker.calls.progress[0].text, /文献信息/);
+
+  const fallbackWorker = makeWorker();
+  await fallbackWorker.message(importMessage());
+  assert.deepEqual(fallbackWorker.calls.progress.map((message) => message.stage),
+    ["download", "import"], "the pdfUrl fallback reports one final import stage");
 });
 
 test("final pdfUrl JSON fallback retains destination", async () => {

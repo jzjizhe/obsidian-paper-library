@@ -22,6 +22,9 @@ const ui = {
   localLabels: document.getElementById("local-labels"),
   metricsSource: document.getElementById("metrics-source"),
   status: document.getElementById("status"),
+  progressCard: document.getElementById("progress-card"),
+  progressBar: document.getElementById("progress-bar"),
+  progressStage: document.getElementById("progress-stage"),
   importActions: document.getElementById("import-actions"),
   destination: document.getElementById("import-destination"),
   collection: document.getElementById("collection-select"),
@@ -47,6 +50,7 @@ let collectionsReady = false;
 let importing = false;
 let connectionRefresh = 0;
 let connectionLoading = false;
+let progressActive = false;
 
 function pdfLike(value) {
   const url = String(value || "");
@@ -236,6 +240,49 @@ function status(kind, message) {
   ui.status.textContent = message;
 }
 
+function enterProgress(text) {
+  progressActive = true;
+  clearStatus();
+  ui.lookupSkeleton.classList.add("hidden");
+  ui.paperCard.classList.add("hidden");
+  ui.libraryCard.classList.add("hidden");
+  ui.libraryBadge.classList.add("hidden");
+  ui.destination.classList.add("hidden");
+  ui.importActions.classList.add("hidden");
+  ui.progressCard.classList.remove("hidden");
+  setProgress(text);
+}
+
+function setProgress(text, { received, total } = {}) {
+  if (Number.isFinite(received) && Number.isFinite(total) && total > 0 && received <= total) {
+    ui.progressBar.classList.remove("indeterminate");
+    ui.progressBar.style.width = `${Math.max(4, Math.round((received / total) * 100))}%`;
+  } else if (!ui.progressBar.style.width || ui.progressBar.style.width === "100%") {
+    ui.progressBar.classList.add("indeterminate");
+    ui.progressBar.style.width = "";
+  }
+  ui.progressStage.classList.remove("done");
+  ui.progressStage.textContent = text;
+}
+
+function finishProgress(text) {
+  ui.progressBar.classList.remove("indeterminate");
+  ui.progressBar.style.width = "100%";
+  ui.progressStage.classList.add("done");
+  ui.progressStage.textContent = text;
+}
+
+function exitProgress() {
+  progressActive = false;
+  ui.progressCard.classList.add("hidden");
+  render(currentPaper);
+  if (currentLibraryPaper) renderLibraryPaper(currentLibraryPaper);
+  else {
+    ui.importActions.classList.remove("hidden");
+    if (recognized(currentPaper)) ui.destination.classList.remove("hidden");
+  }
+}
+
 function clearStatus() {
   ui.status.className = "status hidden";
   ui.status.textContent = "";
@@ -312,7 +359,7 @@ async function importPaper(includePdf) {
   if (!currentPaper || importing || connectionLoading) return;
   const collection = collectionsReady ? ui.collection.value : "";
   setBusy(true);
-  status("working", includePdf ? "正在获取 PDF，并交给 Obsidian 导入…" : "正在导入文献信息…");
+  enterProgress(includePdf ? "正在获取 PDF…" : "正在导入文献信息…");
   try {
     const reply = await chrome.runtime.sendMessage({
       type: "paperlib:import",
@@ -322,21 +369,24 @@ async function importPaper(includePdf) {
       tabId: currentTabId
     });
     if (reply?.ok) {
-      status(reply.duplicate && !reply.attachedPdf ? "working" : "success", reply.attachedPdf
-        ? `已为现有条目补充 PDF：${reply.title || currentPaper.title}`
+      finishProgress(reply.attachedPdf
+        ? `已补充 PDF：${reply.title || currentPaper.title}`
         : reply.duplicate
           ? `库中已有：${reply.title || currentPaper.title}`
-        : reply.metadataOnly
-          ? `文献信息已导入：${reply.title || currentPaper.title}`
-          : `PDF 已导入：${reply.title || currentPaper.title || "当前论文"}`);
-      await refreshConnection();
-      await refreshLibraryStatus();
+          : reply.metadataOnly
+            ? `文献信息已导入：${reply.title || currentPaper.title}`
+            : `PDF 已导入：${reply.title || currentPaper.title || "当前论文"}`);
+      // Give the user a moment to see the result before the popup closes.
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      window.close();
       return;
     }
+    exitProgress();
     status(reply?.code === "needs-login" ? "login" : "error", reply?.error || "导入失败");
     if (reply?.code === "needs-login" || reply?.code === "no-pdf") ui.metadata.classList.add("emphasize");
     if (reply?.code === "collection-not-found" || reply?.code === "upgrade-plugin") await refreshConnection();
   } catch (error) {
+    exitProgress();
     status("error", String(error?.message || error || "导入失败"));
   } finally {
     setBusy(false);
@@ -381,5 +431,14 @@ async function initialize() {
   await refreshConnection();
   await refreshLibraryStatus();
 }
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "paperlib:progress" && progressActive) {
+    setProgress(message.text
+      || (message.stage === "import" ? "正在导入 Obsidian…"
+        : message.stage === "download" ? "正在下载 PDF…"
+        : "正在获取 PDF…"), message);
+  }
+});
 
 void initialize();
