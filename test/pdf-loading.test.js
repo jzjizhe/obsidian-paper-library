@@ -17,7 +17,7 @@ pluginModule.filename = filename;
 pluginModule.paths = Module._nodeModulePaths(path.dirname(filename));
 pluginModule.require = (name) => name === "obsidian" ? obsidianMock : module.require(name);
 pluginModule._compile(
-  `${fs.readFileSync(filename, "utf8")}\nmodule.exports.ResearchView = PaperResearchWorkspaceView;`,
+  `${fs.readFileSync(filename, "utf8")}\nmodule.exports.ResearchView = PaperResearchWorkspaceView;\nmodule.exports.pdfLibForTest = { PDFDocument, PDFName, PDFArray, PDFDict };`,
   filename
 );
 const PaperLibraryPlugin = pluginModule.exports;
@@ -284,7 +284,7 @@ async function run() {
         const unchanged = await mutationPlugin.mutateLocalPdf(file.path, async () => false);
         assert.equal(unchanged, false, "a no-op mutation must not rewrite the file");
         const signed = Buffer.from("%PDF-1.4 fake /ByteRange [0 1 2 3]");
-        mutationPlugin.app.vault.readBinary = async () => signed.buffer;
+        mutationPlugin.app.vault.readBinary = async () => Uint8Array.from(signed).buffer;
         await assert.rejects(mutationPlugin.mutateLocalPdf(file.path, async () => true),
           /数字签名/, "signed PDFs must keep refusing file mutation");
         // The queue must drain so later mutations are not chained forever.
@@ -292,6 +292,93 @@ async function run() {
       } finally {
         globalThis.fetch = previousFetch;
       }
+    }
+
+    {
+      const { PDFDocument, PDFName, PDFArray, PDFDict } = PaperLibraryPlugin.pdfLibForTest;
+      const nativePaper = { id: "native", pdfPath: file.path };
+      let source = buildMinimalPdf();
+      let reads = 0;
+      let writes = 0;
+      let destroyed = 0;
+      let pageError = null;
+      const nativePlugin = createPlugin(async () => {
+        reads += 1;
+        throw new Error("EPERM: operation not permitted");
+      });
+      nativePlugin.settings.papers = [nativePaper];
+      nativePlugin.pdfMutationQueues = new Map();
+      nativePlugin.persistResearchWorkspace = async () => {};
+      nativePlugin.refreshResearchPdfHighlights = () => {};
+      nativePlugin.app.vault.modifyBinary = async (_file, output) => { source = output; writes += 1; };
+      globalThis.fetch = async (url) => {
+        assert.equal(url, resourceUrl);
+        return { ok: true, arrayBuffer: async () => source };
+      };
+      pdfJsMock = {
+        getDocument: ({ data }) => {
+          assert.deepEqual([...data], [...new Uint8Array(source)]);
+          return { promise: Promise.resolve({
+            destroy: async () => { destroyed += 1; },
+            getPage: async () => {
+              if (pageError) throw pageError;
+              return {
+                getTextContent: async () => ({ items: [{ str: "Selected text", width: 30, transform: [10, 0, 0, 10, 10, 160] }] }),
+                getViewport: ({ scale }) => ({ width: 200 * scale, convertToPdfPoint: (x, y) => [x / scale, 200 - y / scale] }),
+                getAnnotations: async () => [{ id: "annotation-1", titleObj: { str: "Paper Library" } }]
+              };
+            }
+          }) };
+        }
+      };
+      const span = { querySelector: () => null, textContent: "Selected text", closest: () => span };
+      let selectionCleared = false;
+      const selection = {
+        rangeCount: 1, toString: () => "Selected text",
+        anchorNode: span, focusNode: span, anchorOffset: 0, focusOffset: 13,
+        getRangeAt: () => ({ getClientRects: () => [{ left: 15, right: 25, top: 20, bottom: 30, width: 10, height: 10 }] }),
+        removeAllRanges: () => { selectionCleared = true; }
+      };
+      const textLayer = {
+        ownerDocument: { defaultView: { getSelection: () => selection } },
+        querySelectorAll: () => [span], contains: () => true,
+        closest: () => ({ dataset: { pageNumber: "1" } }),
+        getBoundingClientRect: () => ({ left: 10, top: 10, width: 100, height: 100 })
+      };
+      const state = { mode: "highlight", highlightColor: "yellow" };
+      await nativePlugin.handleNativePdfPointerUp(
+        { target: { closest: () => textLayer } }, { view: { file } }, { contains: () => true }, state
+      );
+      assert.equal(writes, 1, "selection geometry and annotation saving must both survive EPERM");
+      assert.equal(reads, 2);
+      assert.equal(state.busy, false);
+      assert.equal(selectionCleared, true);
+      assert.equal(destroyed, 1);
+      const mark = nativePaper.researchWorkspace.highlights[0];
+      assert.equal(mark.selectionSource, "native");
+      assert.deepEqual(mark.pdfRects[0].rect, [10, 160, 30, 180]);
+      const saved = await PDFDocument.load(source);
+      const annotations = saved.getPage(0).node.lookup(PDFName.of("Annots"), PDFArray);
+      assert.equal(annotations.size(), 1);
+      const annotation = saved.context.lookup(annotations.get(0), PDFDict);
+      assert.equal(annotation.get(PDFName.of("Subtype")).toString(), "/Highlight");
+      assert.equal(annotation.get(PDFName.of("NM")).decodeText(), `paperlib:${mark.id}`);
+      assert.equal(loggedErrors.length, 2, "native highlight creation must not report a new error");
+
+      assert.equal((await nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } })).id, "annotation-1");
+      assert.equal(await nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "missing" } }), null);
+      assert.equal(destroyed, 3, "annotation lookup must release PDF.js documents");
+      const readsBeforeEmptySelection = reads;
+      assert.deepEqual(await nativePlugin.getNativePdfSelectionData(file, 1, textLayer, []), { pdfRects: [], textItems: [] });
+      assert.equal(reads, readsBeforeEmptySelection);
+      pageError = new Error("Page unavailable");
+      await assert.rejects(nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } }), /Page unavailable/);
+      assert.equal(destroyed, 4, "lookup errors must still release the document");
+      await assert.rejects(nativePlugin.getNativePdfSelectionData(file, 1, textLayer, [{ left: 1, right: 2, top: 1, bottom: 2 }]), /Page unavailable/);
+      assert.equal(destroyed, 5, "selection errors must still release the document");
+      nativePlugin.app.vault.readBinary = async () => { throw new Error("ENOENT: missing PDF"); };
+      globalThis.fetch = async () => { throw new Error("unrelated read errors must avoid fetch"); };
+      await assert.rejects(nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } }), /ENOENT/);
     }
   } finally {
     globalThis.fetch = originalFetch;

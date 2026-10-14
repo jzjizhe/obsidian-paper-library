@@ -17058,7 +17058,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     const rawId = annotationEl.dataset?.annotationId
       || annotationEl.getAttribute?.("data-annotation-id")
       || String(annotationEl.id || "").replace(/^annotation[_-]?/, "");
-    const buffer = await this.app.vault.readBinary(file);
+    const buffer = await this.readPdfBinary(file);
     const pdfjs = await loadPdfJs();
     const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
     try {
@@ -17159,7 +17159,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
 
   async getNativePdfSelectionData(file, pageNumber, textLayer, rects) {
     if (!rects.length) return { pdfRects: [], textItems: [] };
-    const buffer = await this.app.vault.readBinary(file);
+    const buffer = await this.readPdfBinary(file);
     const pdfjs = await loadPdfJs();
     const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
     try {
