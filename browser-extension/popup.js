@@ -22,11 +22,6 @@ const ui = {
   localLabels: document.getElementById("local-labels"),
   metricsSource: document.getElementById("metrics-source"),
   status: document.getElementById("status"),
-  progressPill: document.getElementById("progress-pill"),
-  progressDot: document.getElementById("progress-dot"),
-  progressStage: document.getElementById("progress-stage"),
-  header: document.querySelector(".header"),
-  footer: document.querySelector(".footer"),
   importActions: document.getElementById("import-actions"),
   destination: document.getElementById("import-destination"),
   collection: document.getElementById("collection-select"),
@@ -52,7 +47,6 @@ let collectionsReady = false;
 let importing = false;
 let connectionRefresh = 0;
 let connectionLoading = false;
-let progressActive = false;
 
 function pdfLike(value) {
   const url = String(value || "");
@@ -242,72 +236,6 @@ function status(kind, message) {
   ui.status.textContent = message;
 }
 
-function enterProgress(text) {
-  progressActive = true;
-  clearStatus();
-  document.documentElement.classList.add("is-progress");
-  ui.lookupSkeleton.classList.add("hidden");
-  ui.paperCard.classList.add("hidden");
-  ui.libraryCard.classList.add("hidden");
-  ui.libraryBadge.classList.add("hidden");
-  ui.destination.classList.add("hidden");
-  ui.importActions.classList.add("hidden");
-  ui.header.classList.add("hidden");
-  ui.footer.classList.add("hidden");
-  ui.settingsPanel.classList.add("hidden");
-  ui.progressPill.classList.remove("hidden");
-  setProgress(text);
-}
-
-// Compact pill copy: stage first, percentages only when Chrome provides them.
-function shortStage(stage, { received, total } = {}) {
-  if (stage === "import") return "导入中";
-  if (stage === "download") {
-    return Number.isFinite(received) && Number.isFinite(total) && total > 0
-      ? `下载 ${Math.min(99, Math.max(1, Math.round((received / total) * 100)))}%`
-      : "下载 PDF";
-  }
-  return "获取 PDF";
-}
-
-function setProgress(stage, payload = {}) {
-  ui.progressDot.classList.remove("done", "error");
-  ui.progressStage.classList.remove("done", "error");
-  ui.progressStage.textContent = shortStage(stage, payload);
-}
-
-function finishProgress(text) {
-  ui.progressDot.classList.add("done");
-  ui.progressStage.classList.add("done");
-  ui.progressStage.textContent = text;
-}
-
-function failProgress(code) {
-  ui.progressDot.classList.add("error");
-  ui.progressStage.classList.add("error");
-  ui.progressStage.textContent = ({
-    "needs-login": "需要登录",
-    "no-pdf": "没有 PDF",
-    "collection-not-found": "分类失效",
-    "upgrade-plugin": "插件过旧",
-    "bad-token": "Token 无效"
-  })[code] || "导入失败";
-}
-
-function exitProgress() {
-  progressActive = false;
-  document.documentElement.classList.remove("is-progress");
-  ui.header.classList.remove("hidden");
-  ui.footer.classList.remove("hidden");
-  ui.progressPill.classList.add("hidden");
-  render(currentPaper);
-  if (currentLibraryPaper) renderLibraryPaper(currentLibraryPaper);
-  else {
-    ui.importActions.classList.remove("hidden");
-    if (recognized(currentPaper)) ui.destination.classList.remove("hidden");
-  }
-}
-
 function clearStatus() {
   ui.status.className = "status hidden";
   ui.status.textContent = "";
@@ -383,39 +311,16 @@ async function refreshConnection() {
 async function importPaper(includePdf) {
   if (!currentPaper || importing || connectionLoading) return;
   const collection = collectionsReady ? ui.collection.value : "";
-  setBusy(true);
-  enterProgress();
-  try {
-    const reply = await chrome.runtime.sendMessage({
-      type: "paperlib:import",
-      info: currentPaper,
-      includePdf,
-      collection,
-      tabId: currentTabId
-    });
-    if (reply?.ok) {
-      finishProgress(reply.duplicate && !reply.attachedPdf ? "已在库中" : "已导入");
-      // Give the user a moment to see the result before the popup closes.
-      await new Promise((resolve) => setTimeout(resolve, 1600));
-      window.close();
-      return;
-    }
-    failProgress(reply?.code);
-    // Show the failure briefly on the pill, then restore the full view so the
-    // error can be read and retried.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    exitProgress();
-    status(reply?.code === "needs-login" ? "login" : "error", reply?.error || "导入失败");
-    if (reply?.code === "needs-login" || reply?.code === "no-pdf") ui.metadata.classList.add("emphasize");
-    if (reply?.code === "collection-not-found" || reply?.code === "upgrade-plugin") await refreshConnection();
-  } catch (error) {
-    failProgress();
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    exitProgress();
-    status("error", String(error?.message || error || "导入失败"));
-  } finally {
-    setBusy(false);
-  }
+  // The badge carries progress after this popup closes; failures surface on
+  // the badge and in Obsidian's notice.
+  chrome.runtime.sendMessage({
+    type: "paperlib:import",
+    info: currentPaper,
+    includePdf,
+    collection,
+    tabId: currentTabId
+  }).catch(() => undefined);
+  window.close();
 }
 
 async function initialize() {
@@ -456,13 +361,5 @@ async function initialize() {
   await refreshConnection();
   await refreshLibraryStatus();
 }
-
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === "paperlib:progress" && progressActive) {
-    // The worker's done event only drives the badge; the popup's own reply
-    // decides the success/failure rendering.
-    if (message.stage !== "done") setProgress(message.stage, message);
-  }
-});
 
 void initialize();

@@ -133,6 +133,14 @@ function updateBadge(payload) {
   chrome.action.setBadgeText({ text }).catch(() => undefined);
 }
 
+// With the popup closed, a failed import needs a visible trace: a red "!"
+// on the toolbar icon that clears itself.
+function markFailedBadge() {
+  chrome.action.setBadgeBackgroundColor({ color: "#b84747" }).catch(() => undefined);
+  chrome.action.setBadgeText({ text: "!" }).catch(() => undefined);
+  setTimeout(() => chrome.action.setBadgeText({ text: "" }).catch(() => undefined), 5000);
+}
+
 async function warmPdfNavigation(url) {
   // IEEE's AWS WAF allows the same URL as a top-level navigation after the
   // institution session is established, but can reject extension fetch/XHR.
@@ -514,11 +522,13 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       .then((result) => {
         activeImport = null;
         reportProgress({ stage: "done", ok: Boolean(result?.ok) });
+        if (!result?.ok) markFailedBadge();
         respond(result);
       })
       .catch((error) => {
         activeImport = null;
         reportProgress({ stage: "done", ok: false });
+        markFailedBadge();
         respond({ ok: false, code: "error", error: String(error?.message || error) });
       });
     return true;
