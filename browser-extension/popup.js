@@ -22,9 +22,11 @@ const ui = {
   localLabels: document.getElementById("local-labels"),
   metricsSource: document.getElementById("metrics-source"),
   status: document.getElementById("status"),
-  progressCard: document.getElementById("progress-card"),
-  progressBar: document.getElementById("progress-bar"),
+  progressPill: document.getElementById("progress-pill"),
+  progressDot: document.getElementById("progress-dot"),
   progressStage: document.getElementById("progress-stage"),
+  header: document.querySelector(".header"),
+  footer: document.querySelector(".footer"),
   importActions: document.getElementById("import-actions"),
   destination: document.getElementById("import-destination"),
   collection: document.getElementById("collection-select"),
@@ -243,38 +245,61 @@ function status(kind, message) {
 function enterProgress(text) {
   progressActive = true;
   clearStatus();
+  document.documentElement.classList.add("is-progress");
   ui.lookupSkeleton.classList.add("hidden");
   ui.paperCard.classList.add("hidden");
   ui.libraryCard.classList.add("hidden");
   ui.libraryBadge.classList.add("hidden");
   ui.destination.classList.add("hidden");
   ui.importActions.classList.add("hidden");
-  ui.progressCard.classList.remove("hidden");
+  ui.header.classList.add("hidden");
+  ui.footer.classList.add("hidden");
+  ui.settingsPanel.classList.add("hidden");
+  ui.progressPill.classList.remove("hidden");
   setProgress(text);
 }
 
-function setProgress(text, { received, total } = {}) {
-  if (Number.isFinite(received) && Number.isFinite(total) && total > 0 && received <= total) {
-    ui.progressBar.classList.remove("indeterminate");
-    ui.progressBar.style.width = `${Math.max(4, Math.round((received / total) * 100))}%`;
-  } else if (!ui.progressBar.style.width || ui.progressBar.style.width === "100%") {
-    ui.progressBar.classList.add("indeterminate");
-    ui.progressBar.style.width = "";
+// Compact pill copy: stage first, percentages only when Chrome provides them.
+function shortStage(stage, { received, total } = {}) {
+  if (stage === "import") return "导入中";
+  if (stage === "download") {
+    return Number.isFinite(received) && Number.isFinite(total) && total > 0
+      ? `下载 ${Math.min(99, Math.max(1, Math.round((received / total) * 100)))}%`
+      : "下载 PDF";
   }
-  ui.progressStage.classList.remove("done");
-  ui.progressStage.textContent = text;
+  return "获取 PDF";
+}
+
+function setProgress(stage, payload = {}) {
+  ui.progressDot.classList.remove("done", "error");
+  ui.progressStage.classList.remove("done", "error");
+  ui.progressStage.textContent = shortStage(stage, payload);
 }
 
 function finishProgress(text) {
-  ui.progressBar.classList.remove("indeterminate");
-  ui.progressBar.style.width = "100%";
+  ui.progressDot.classList.add("done");
   ui.progressStage.classList.add("done");
   ui.progressStage.textContent = text;
 }
 
+function failProgress(code) {
+  ui.progressDot.classList.add("error");
+  ui.progressStage.classList.add("error");
+  ui.progressStage.textContent = ({
+    "needs-login": "需要登录",
+    "no-pdf": "没有 PDF",
+    "collection-not-found": "分类失效",
+    "upgrade-plugin": "插件过旧",
+    "bad-token": "Token 无效"
+  })[code] || "导入失败";
+}
+
 function exitProgress() {
   progressActive = false;
-  ui.progressCard.classList.add("hidden");
+  document.documentElement.classList.remove("is-progress");
+  ui.header.classList.remove("hidden");
+  ui.footer.classList.remove("hidden");
+  ui.progressPill.classList.add("hidden");
   render(currentPaper);
   if (currentLibraryPaper) renderLibraryPaper(currentLibraryPaper);
   else {
@@ -359,7 +384,7 @@ async function importPaper(includePdf) {
   if (!currentPaper || importing || connectionLoading) return;
   const collection = collectionsReady ? ui.collection.value : "";
   setBusy(true);
-  enterProgress(includePdf ? "正在获取 PDF…" : "正在导入文献信息…");
+  enterProgress();
   try {
     const reply = await chrome.runtime.sendMessage({
       type: "paperlib:import",
@@ -369,23 +394,23 @@ async function importPaper(includePdf) {
       tabId: currentTabId
     });
     if (reply?.ok) {
-      finishProgress(reply.attachedPdf
-        ? `已补充 PDF：${reply.title || currentPaper.title}`
-        : reply.duplicate
-          ? `库中已有：${reply.title || currentPaper.title}`
-          : reply.metadataOnly
-            ? `文献信息已导入：${reply.title || currentPaper.title}`
-            : `PDF 已导入：${reply.title || currentPaper.title || "当前论文"}`);
+      finishProgress(reply.duplicate && !reply.attachedPdf ? "已在库中" : "已导入");
       // Give the user a moment to see the result before the popup closes.
       await new Promise((resolve) => setTimeout(resolve, 1600));
       window.close();
       return;
     }
+    failProgress(reply?.code);
+    // Show the failure briefly on the pill, then restore the full view so the
+    // error can be read and retried.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     exitProgress();
     status(reply?.code === "needs-login" ? "login" : "error", reply?.error || "导入失败");
     if (reply?.code === "needs-login" || reply?.code === "no-pdf") ui.metadata.classList.add("emphasize");
     if (reply?.code === "collection-not-found" || reply?.code === "upgrade-plugin") await refreshConnection();
   } catch (error) {
+    failProgress();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     exitProgress();
     status("error", String(error?.message || error || "导入失败"));
   } finally {
@@ -434,10 +459,7 @@ async function initialize() {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "paperlib:progress" && progressActive) {
-    setProgress(message.text
-      || (message.stage === "import" ? "正在导入 Obsidian…"
-        : message.stage === "download" ? "正在下载 PDF…"
-        : "正在获取 PDF…"), message);
+    setProgress(message.stage, message);
   }
 });
 

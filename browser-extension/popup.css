@@ -281,25 +281,50 @@ button:disabled { cursor: default; opacity: 0.46; }
 .field select:disabled { opacity: 0.6; }
 .hint { margin: 3px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.55; }
 
-.progress-card { padding: 11px 13px; }
-.progress-track {
-  height: 6px;
-  overflow: hidden;
+/* Import progress collapses the whole popup into a small pill. Chrome
+   negotiates the popup viewport from the document, so the compact mode must
+   release the fixed 392px width on html and body. */
+.progress-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--line) 55%, transparent);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
-.progress-bar {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #8d80e5, var(--accent));
-  transition: width 240ms var(--ease);
+html.is-progress { width: fit-content; min-width: 0; }
+/* Chrome keeps the popup's opened width, so center the pill inside the
+   shortened window instead of trying to shrink it. */
+html.is-progress body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  max-height: none;
+  margin: 0;
 }
-.progress-bar.indeterminate { width: 38%; animation: progress-slide 1.1s ease-in-out infinite; }
-.progress-stage { margin-top: 7px; color: var(--muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }
-.progress-stage.done { color: var(--success); font-weight: 620; }
-@keyframes progress-slide {
-  from { margin-left: -38%; }
-  to { margin-left: 100%; }
+html.is-progress .header,
+html.is-progress main,
+html.is-progress .footer,
+html.is-progress #settings-panel { display: none; }
+.progress-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: progress-pulse 1s ease-in-out infinite;
+}
+.progress-dot.done { background: var(--success); animation: none; }
+.progress-dot.error { background: var(--danger); animation: none; }
+.progress-stage { color: var(--text); font-size: 12px; font-weight: 560; white-space: nowrap; }
+.progress-stage.done { color: var(--success); }
+.progress-stage.error { color: var(--danger); }
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
 }
 .hidden { display: none !important; }
 

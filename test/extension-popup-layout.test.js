@@ -18,10 +18,18 @@ assert.match(css, /\.metric-skeletons\s*\{[^}]*grid-template-columns:\s*repeat\(
 assert.match(css, /\.actions\s*\{[^}]*grid-template-columns:\s*1fr\s+1fr/);
 assert.equal((css.match(/\.metric-grid\s*\{/g) || []).length, 1,
   "metric columns must retain the original four-column layout");
-for (const selector of [".progress-card", ".progress-track", ".progress-bar", ".progress-stage"]) {
+for (const selector of [".progress-pill", ".progress-dot", ".progress-stage"]) {
   assert.ok(css.includes(selector), `compact progress flow must style ${selector}`);
 }
-assert.match(css, /\.progress-bar\.indeterminate[^{]*\{[^}]*animation:\s*progress-slide/,
-  "downloads without byte counts must show the indeterminate animation");
+assert.match(css, /html\.is-progress\s*\{[^}]*width:\s*fit-content/,
+  "progress mode must release the fixed 392px popup width");
+assert.match(css, /html\.is-progress body\s*\{[^}]*display:\s*flex/,
+  "the pill must center inside the shortened popup window");
+assert.match(css, /\.progress-dot\s*\{[^}]*animation:\s*progress-pulse/,
+  "the running dot must pulse while importing");
+assert.match(css, /\.progress-dot\.done\s*\{[^}]*var\(--success\)/);
+assert.match(css, /\.progress-dot\.error\s*\{[^}]*var\(--danger\)/);
+assert.doesNotMatch(css, /\.progress-card|\.progress-track|progress-slide/,
+  "the replaced progress bar must be fully removed");
 
 console.log("Extension popup sizing regression tests passed");
