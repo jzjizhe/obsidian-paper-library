@@ -117,6 +117,7 @@ function delay(milliseconds) {
 // deliver (popup already closed) must never break an import. The toolbar
 // badge mirrors the progress so it stays visible after the popup closes.
 const BADGE_COLOR = "#7161d7";
+const IMPORT_WATCHDOG_MS = 120000;
 let activeImport = null;
 function reportProgress(payload) {
   if (activeImport) activeImport = { ...activeImport, ...payload };
@@ -140,6 +141,15 @@ function markFailedBadge() {
   chrome.action.setBadgeText({ text: "!" }).catch(() => undefined);
   setTimeout(() => chrome.action.setBadgeText({ text: "" }).catch(() => undefined), 5000);
 }
+
+// Badges outlive the service worker: if Chrome reclaims the worker mid-import
+// (or the browser restarts), the completion event never runs. Clear any stale
+// badge whenever the worker wakes up with no import in flight.
+chrome.action.getBadgeText({}, (details) => {
+  if (!chrome.runtime.lastError && details?.text && !activeImport) {
+    chrome.action.setBadgeText({ text: "" }).catch(() => undefined);
+  }
+});
 
 async function warmPdfNavigation(url) {
   // IEEE's AWS WAF allows the same URL as a top-level navigation after the
@@ -518,19 +528,28 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   }
   if (message?.type === "paperlib:import") {
     activeImport = { stage: "discover" };
+    // A hung transport (dead tab, stalled fetch) must not leave the badge
+    // stuck forever; fail visibly and let the user retry.
+    let settled = false;
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      activeImport = null;
+      markFailedBadge();
+      respond({ ok: false, code: "timeout", error: "导入超时，请重试" });
+    }, IMPORT_WATCHDOG_MS);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      activeImport = null;
+      reportProgress({ stage: "done", ok: Boolean(result?.ok) });
+      if (!result?.ok) markFailedBadge();
+      respond(result);
+    };
     importCurrentPaper(message.info || {}, message.includePdf !== false, message.tabId, message.collection ?? "")
-      .then((result) => {
-        activeImport = null;
-        reportProgress({ stage: "done", ok: Boolean(result?.ok) });
-        if (!result?.ok) markFailedBadge();
-        respond(result);
-      })
-      .catch((error) => {
-        activeImport = null;
-        reportProgress({ stage: "done", ok: false });
-        markFailedBadge();
-        respond({ ok: false, code: "error", error: String(error?.message || error) });
-      });
+      .then(finish)
+      .catch((error) => finish({ ok: false, code: "error", error: String(error?.message || error) }));
     return true;
   }
   if (message?.type === "paperlib:lookup") {

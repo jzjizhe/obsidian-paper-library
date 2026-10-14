@@ -57,7 +57,8 @@ function makeWorker(options = {}) {
     runtime: { onMessage: { addListener: (handler) => { listener = handler; } }, sendMessage: async (message) => { calls.progress.push(message); } },
     action: {
       setBadgeText: async (details) => { calls.badge.push(details.text); },
-      setBadgeBackgroundColor: async () => {}
+      setBadgeBackgroundColor: async () => {},
+      getBadgeText: (_details, callback) => callback({ text: options.staleBadge ?? "" })
     },
     tabs: {
       onUpdated,
@@ -274,6 +275,16 @@ test("browser-download filePath JSON retains destination and cleanup", async () 
   assert.equal(worker.calls.progress.at(-1).ok, true);
   assert.deepEqual(worker.calls.badge, ["…", "…", "…", ""],
     "badge must show an active marker during the import and clear on completion");
+  assert.equal(worker.calls.badge[0], "…",
+    "a fresh worker without a stale badge must not clear anything at startup");
+});
+
+test("stale badges are cleared when the worker wakes up without an import", async () => {
+  const worker = makeWorker({ staleBadge: "63" });
+  await worker.message({ type: "paperlib:ping" });
+  assert.equal(worker.calls.badge[0], "",
+    "a leftover badge from a reclaimed worker must be cleared at startup");
+  assert.equal(worker.calls.badge.length, 1, "the cleared badge must stay clear");
 });
 
 test("popup progress stages cover binary, metadata, and fallback transports", async () => {
