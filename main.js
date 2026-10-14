@@ -3391,7 +3391,7 @@ class PaperLibraryView extends ItemView {
     });
     card.addEventListener("dblclick", (event) => {
       event.preventDefault();
-      void this.plugin.openPaperPdf(paper, { native: this.plugin.isMobileApp() });
+      void this.plugin.openPaperPdf(paper, { native: true });
     });
   }
 
@@ -4057,7 +4057,7 @@ class PaperLibraryView extends ItemView {
         void this.plugin.saveSettings().catch((error) => (
           console.warn("Paper Library: opened-paper timestamp save unavailable", error)
         ));
-        await this.plugin.openPaperPdf(paper, { native: this.plugin.isMobileApp() });
+        await this.plugin.openPaperPdf(paper, { native: true });
       });
       row.addEventListener("contextmenu", (event) => this.showPaperContextMenu(event, paper));
       if (!this.plugin.isMobileApp()) {
@@ -4396,12 +4396,12 @@ class PaperLibraryView extends ItemView {
       .onClick(() => void this.plugin.addPaperToPaperComposer(paper)));
     if (paper.pdfPath) {
       menu.addItem((item) => item
-        .setTitle("在研究画布中打开 PDF")
-        .setIcon("panels-top-left")
-        .onClick(() => this.plugin.openPaperPdf(paper)));
+        .setTitle("用原生 PDF 阅读器打开")
+        .setIcon("file-text")
+        .onClick(() => this.plugin.openPaperPdf(paper, { native: true })));
     }
     menu.addItem((item) => item
-      .setTitle("打开研究画布")
+      .setTitle("用 Research Workspace 打开")
       .setIcon("waypoints")
       .onClick(() => this.plugin.openResearchWorkspace(paper, this.app.workspace.activeLeaf, true)));
     menu.addSeparator();
@@ -5800,7 +5800,7 @@ class PaperResearchWorkspaceView extends ItemView {
       if (!file) throw new Error("找不到 PDF 文件");
       if (!this.pdfCache || this.pdfCache.path !== pdfPath) {
         try { await this.pdfCache?.document?.destroy?.(); } catch (_) {}
-        const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.app.vault.readBinary(file)]);
+        const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.plugin.readPdfBinary(file)]);
         const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
         this.pdfCache = { path: pdfPath, pdfjs, document, pages: new Map() };
       }
@@ -15512,11 +15512,32 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     }
   }
 
+  async readPdfBinary(file) {
+    try {
+      return await this.app.vault.readBinary(file);
+    } catch (error) {
+      const permissionDenied = ["EPERM", "EACCES"].includes(error?.code)
+        || /\b(?:EPERM|EACCES)\b/.test(String(error?.message || ""));
+      if (!permissionDenied || typeof this.app.vault.getResourcePath !== "function"
+        || typeof globalThis.fetch !== "function") throw error;
+      // Obsidian's resource URL can remain readable when direct file access is denied.
+      try {
+        const resourcePath = this.app.vault.getResourcePath(file);
+        if (!resourcePath) throw new Error("PDF 资源地址为空");
+        const response = await globalThis.fetch(resourcePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.arrayBuffer();
+      } catch (resourceError) {
+        throw new Error(`${error.message || error}；Obsidian PDF 资源读取失败：${resourceError.message || resourceError}`, { cause: error });
+      }
+    }
+  }
+
   async loadPdfFigureDocument(pdfPath) {
     const path = normalizePath(pdfPath || "");
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) throw new Error("找不到 PDF 文件");
-    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.app.vault.readBinary(file)]);
+    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.readPdfBinary(file)]);
     return pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
   }
 
@@ -15921,7 +15942,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     const path = normalizePath(pdfPath || "");
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) throw new Error("找不到 PDF 文件");
-    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.app.vault.readBinary(file)]);
+    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.readPdfBinary(file)]);
     const pdfDocument = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
     try {
       const page = await pdfDocument.getPage(Math.max(1, Number(figure.pageNumber) || 1));
@@ -17380,7 +17401,8 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       this.sendExtensionJson(res, 200, {
         ok: true,
         app: "obsidian-paper-library",
-        papers: (this.settings.papers || []).length
+        papers: (this.settings.papers || []).length,
+        collections: this.getExtensionCollections()
       });
       return;
     }
@@ -17425,6 +17447,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       const result = await this.importExtensionPaper({
         metadata: envelope?.metadata || {},
         fileName: envelope?.fileName || "",
+        collection: envelope?.collection,
         pdfBuffer: raw.subarray(4 + metadataLength)
       });
       this.sendExtensionJson(res, result.ok ? 200 : 400, result);
@@ -17462,7 +17485,21 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     };
   }
 
+  getExtensionCollections() {
+    return expandCollectionPaths([
+      ...(Array.isArray(this.settings.collections) ? this.settings.collections : []),
+      ...(this.settings.papers || []).flatMap((paper) => Array.isArray(paper.collections) ? paper.collections : [])
+    ]);
+  }
+
   async importExtensionPaper(payload = {}) {
+    if (payload.collection !== undefined && typeof payload.collection !== "string") {
+      return { ok: false, code: "collection-not-found", error: "导入分类无效，请刷新分类后重新选择" };
+    }
+    const collection = payload.collection || "";
+    if (collection && !this.getExtensionCollections().includes(collection)) {
+      return { ok: false, code: "collection-not-found", error: "导入分类已删除或重命名，请刷新分类后重新选择" };
+    }
     const metadata = payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {};
     metadata.title = String(metadata.title || "").trim();
     if (!metadata.title && !payload.pdfBuffer && !payload.pdfBase64 && !payload.pdfUrl && !payload.filePath) {
@@ -17516,6 +17553,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       if (!fileName) fileName = `${safeFileName(metadata.title || "paper") || "paper"}.pdf`;
       if (!fileName.toLocaleLowerCase().endsWith(".pdf")) fileName += ".pdf";
       if (duplicate) {
+        if (collection) await this.addPapersToCollection([duplicate.id], collection);
         const existingPdf = duplicate.pdfPath
           ? this.app.vault.getAbstractFileByPath(normalizePath(duplicate.pdfPath))
           : null;
@@ -17540,7 +17578,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
         return { ok: true, duplicate: true, title: duplicate.title };
       }
       const fileShim = { name: fileName, type: "application/pdf", arrayBuffer: async () => buffer };
-      const summary = await this.importPdfBatch([fileShim], [metadata]);
+      const summary = await this.importPdfBatch([fileShim], [metadata], { collection });
       if (!summary.imported) return { ok: false, error: "PDF 保存失败" };
       if (cleanupPath) { try { require("node:fs").unlinkSync(cleanupPath); } catch (_) { /* ignore */ } }
       return { ok: true, duplicate: false, title: metadata.title || fileName };
@@ -17549,10 +17587,12 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     // Metadata-only import: the extension could not obtain a PDF (for example
     // a paywalled page), so the bibliographic record is still added.
     if (duplicate) {
+      if (collection) await this.addPapersToCollection([duplicate.id], collection);
       new Notice(`论文已在库中：${duplicate.title}`);
       return { ok: true, duplicate: true, title: duplicate.title };
     }
     const paper = this.createBatchImportPaper({ name: fileName || `${metadata.title}.pdf` }, 0);
+    if (collection) paper.collections = [collection];
     delete paper.importStatus;
     delete paper.importError;
     this.applyBatchImportMetadata(paper, metadata, metadata.source || "浏览器扩展");
@@ -17697,7 +17737,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     return this.importPdfBatch(pdfs);
   }
 
-  async importPdfBatch(files, hints = []) {
+  async importPdfBatch(files, hints = [], options = {}) {
     const hintList = Array.isArray(hints) ? hints : [];
     const entries = Array.from(files || []).map((file, index) => ({
       file,
@@ -17713,6 +17753,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     // The placeholder records are committed before any PDF parsing or network
     // request. This lets the library paint the whole batch immediately.
     entries.forEach((entry) => {
+      if (options.collection) entry.paper.collections = [options.collection];
       if (entry.hint && typeof entry.hint === "object") {
         this.applyBatchImportMetadata(entry.paper, entry.hint, entry.hint.source || "浏览器扩展");
       }

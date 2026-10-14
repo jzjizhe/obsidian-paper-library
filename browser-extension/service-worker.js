@@ -39,8 +39,8 @@ async function postJson(settings, path, payload) {
   return { status: response.status, data: await responseJson(response) };
 }
 
-async function postPdf(settings, metadata, fileName, pdfBuffer) {
-  const json = new TextEncoder().encode(JSON.stringify({ metadata, fileName }));
+async function postPdf(settings, metadata, fileName, pdfBuffer, collection = "") {
+  const json = new TextEncoder().encode(JSON.stringify({ metadata, fileName, collection }));
   const header = new Uint8Array(4);
   new DataView(header.buffer).setUint32(0, json.byteLength, false);
   const response = await fetch(endpoint(settings, "/api/import-pdf"), {
@@ -331,7 +331,7 @@ function normalizeServerResult(status, data) {
     title: data.title || ""
   };
   if (data?.needsLogin) return { ok: false, code: "needs-login", error: data.error || "请登录出版商网站后重试" };
-  return { ok: false, code: status === 401 ? "bad-token" : "server", error: data?.error || `导入失败（HTTP ${status}）` };
+  return { ok: false, code: status === 401 ? "bad-token" : (data?.code || "server"), error: data?.error || `导入失败（HTTP ${status}）` };
 }
 
 async function requireBridge() {
@@ -349,12 +349,18 @@ async function requireBridge() {
   }
 }
 
-async function importCurrentPaper(info, includePdf, tabId) {
+async function importCurrentPaper(info, includePdf, tabId, collection = "") {
   const bridge = await requireBridge();
   if (bridge.error) return bridge.error;
+  if (collection && !Array.isArray(bridge.ping?.collections)) {
+    return { ok: false, code: "upgrade-plugin", error: "请重新加载新版 Paper Library，以支持指定导入分类" };
+  }
+  if (typeof collection !== "string" || (collection && !bridge.ping.collections.includes(collection))) {
+    return { ok: false, code: "collection-not-found", error: "导入分类已删除或重命名，请刷新分类后重新选择" };
+  }
   const metadata = metadataFrom(info);
   if (!includePdf) {
-    const result = await postJson(bridge.settings, "/api/import", { metadata });
+    const result = await postJson(bridge.settings, "/api/import", { metadata, collection });
     return normalizeServerResult(result.status, result.data);
   }
 
@@ -373,14 +379,14 @@ async function importCurrentPaper(info, includePdf, tabId) {
   let sawLoginPage = false;
   const pageDownload = await fetchPdfFromPage(tabId, pdfUrl);
   if (pageDownload?.kind === "pdf") {
-    const result = await postPdf(bridge.settings, metadata, fileName, pageDownload.buffer);
+    const result = await postPdf(bridge.settings, metadata, fileName, pageDownload.buffer, collection);
     return normalizeServerResult(result.status, result.data);
   }
   sawLoginPage ||= pageDownload?.kind === "needs-login";
 
   const workerDownload = await fetchPdfFromWorker(pdfUrl);
   if (workerDownload.kind === "pdf") {
-    const result = await postPdf(bridge.settings, metadata, fileName, workerDownload.buffer);
+    const result = await postPdf(bridge.settings, metadata, fileName, workerDownload.buffer, collection);
     return normalizeServerResult(result.status, result.data);
   }
   sawLoginPage ||= workerDownload.kind === "needs-login";
@@ -390,7 +396,7 @@ async function importCurrentPaper(info, includePdf, tabId) {
     if (warmed) {
       const warmedDownload = await fetchPdfFromWorker(pdfUrl);
       if (warmedDownload.kind === "pdf") {
-        const result = await postPdf(bridge.settings, metadata, fileName, warmedDownload.buffer);
+        const result = await postPdf(bridge.settings, metadata, fileName, warmedDownload.buffer, collection);
         return normalizeServerResult(result.status, result.data);
       }
       sawLoginPage ||= warmedDownload.kind === "needs-login";
@@ -403,6 +409,7 @@ async function importCurrentPaper(info, includePdf, tabId) {
   if (browserDownload.kind === "file") {
     const result = await postJson(bridge.settings, "/api/import", {
       metadata,
+      collection,
       filePath: browserDownload.path,
       fileName: browserDownload.fileName,
       cleanup: true
@@ -424,14 +431,14 @@ async function importCurrentPaper(info, includePdf, tabId) {
     const openAccessDownload = await fetchPdfFromWorker(openAccessUrl);
     if (openAccessDownload.kind === "pdf") {
       const oaFileName = safeFileName(info, openAccessUrl);
-      const result = await postPdf(bridge.settings, metadata, oaFileName, openAccessDownload.buffer);
+      const result = await postPdf(bridge.settings, metadata, oaFileName, openAccessDownload.buffer, collection);
       return normalizeServerResult(result.status, result.data);
     }
   }
 
   // Obsidian gets one final chance for genuinely public URLs. It intentionally
   // has no browser cookies, so an HTML response becomes a login prompt.
-  const fallback = await postJson(bridge.settings, "/api/import", { metadata, pdfUrl, fileName });
+  const fallback = await postJson(bridge.settings, "/api/import", { metadata, collection, pdfUrl, fileName });
   const normalizedFallback = normalizeServerResult(fallback.status, fallback.data);
   if (normalizedFallback.ok) return normalizedFallback;
   if (sawLoginPage || normalizedFallback.code === "needs-login") {
@@ -463,12 +470,13 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message?.type === "paperlib:ping") {
     requireBridge().then((bridge) => respond(bridge.error || {
       ok: true,
-      papers: bridge.ping?.papers
+      papers: bridge.ping?.papers,
+      collections: Array.isArray(bridge.ping?.collections) ? bridge.ping.collections : null
     })).catch((error) => respond({ ok: false, error: String(error) }));
     return true;
   }
   if (message?.type === "paperlib:import") {
-    importCurrentPaper(message.info || {}, message.includePdf !== false, message.tabId)
+    importCurrentPaper(message.info || {}, message.includePdf !== false, message.tabId, message.collection ?? "")
       .then(respond)
       .catch((error) => respond({ ok: false, code: "error", error: String(error?.message || error) }));
     return true;

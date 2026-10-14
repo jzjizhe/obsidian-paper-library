@@ -126,7 +126,7 @@ Paper Composer 是 Paper Library 内置的智能写作与研究侧栏。它与�
 ```
 
 1. 把本地文件拖入中央论文库，确认自动识别的元数据。
-2. 双击论文进入研究空间，或直接使用 Obsidian 原生阅读器。
+2. 双击论文使用 Obsidian 原生 PDF 阅读器；右键选择「用原生 PDF 阅读器打开」或「用 Research Workspace 打开」。
 3. 勾画文字、用自由画笔标记，或者把选区拖成研究卡片。
 4. 右键或拖动内容到 Paper Composer；论文自动成为 linked content。
 5. 继续提问。当前会话会保留文档关系，而不会每轮重新附带完整正文。

@@ -59,6 +59,19 @@
 
     <div id="status" class="status hidden"></div>
 
+    <section id="import-destination" class="card hidden">
+      <div class="field">
+        <div class="destination-heading">
+          <label for="collection-select">导入分类</label>
+          <button id="refresh-collections-btn" class="link" type="button">刷新分类</button>
+        </div>
+        <select id="collection-select" aria-describedby="collection-hint" disabled>
+          <option value="">未分类（默认）</option>
+        </select>
+      </div>
+      <p id="collection-hint" class="hint" role="status">连接 Obsidian 后可选择分类。</p>
+    </section>
+
     <div id="import-actions" class="actions">
       <button id="import-pdf-btn" class="primary" disabled>
         <span>下载 PDF 并导入</span>

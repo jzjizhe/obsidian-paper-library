@@ -23,6 +23,10 @@ const ui = {
   metricsSource: document.getElementById("metrics-source"),
   status: document.getElementById("status"),
   importActions: document.getElementById("import-actions"),
+  destination: document.getElementById("import-destination"),
+  collection: document.getElementById("collection-select"),
+  collectionHint: document.getElementById("collection-hint"),
+  refreshCollections: document.getElementById("refresh-collections-btn"),
   importPdf: document.getElementById("import-pdf-btn"),
   metadata: document.getElementById("metadata-btn"),
   settingsToggle: document.getElementById("settings-toggle"),
@@ -37,6 +41,12 @@ const ui = {
 let currentPaper = null;
 let currentTabId = null;
 let currentLibraryPaper = null;
+let currentConnection = "";
+let destinationPreference = null;
+let collectionsReady = false;
+let importing = false;
+let connectionRefresh = 0;
+let connectionLoading = false;
 
 function pdfLike(value) {
   const url = String(value || "");
@@ -109,6 +119,7 @@ function render(paper) {
   ui.emptyCard.classList.toggle("hidden", available);
   ui.importPdf.disabled = !available;
   ui.metadata.disabled = !available || (!paper?.title && !paper?.doi && !paper?.arxiv);
+  ui.destination.classList.toggle("hidden", !available || Boolean(currentLibraryPaper));
   if (!available) return;
 
   ui.title.textContent = paper.title || (paper.isPdfPage ? "当前 PDF" : "未识别标题");
@@ -157,6 +168,7 @@ function renderLibraryPaper(paper) {
   ui.libraryBadge.classList.toggle("hidden", !found);
   ui.libraryCard.classList.toggle("hidden", !found);
   ui.importActions.classList.toggle("hidden", found);
+  ui.destination.classList.toggle("hidden", found || !recognized(currentPaper));
   if (!found) return;
 
   ui.localVenue.textContent = paper.venue || "未记录期刊或会议";
@@ -230,30 +242,75 @@ function clearStatus() {
 }
 
 function setBusy(busy) {
-  ui.importPdf.disabled = busy || !recognized(currentPaper);
-  ui.metadata.disabled = busy || !recognized(currentPaper);
+  importing = busy;
+  ui.importPdf.disabled = busy || connectionLoading || !recognized(currentPaper);
+  ui.metadata.disabled = busy || connectionLoading || !recognized(currentPaper)
+    || (!currentPaper?.title && !currentPaper?.doi && !currentPaper?.arxiv);
+  ui.collection.disabled = busy || !collectionsReady;
+  ui.refreshCollections.disabled = busy;
+  ui.save.disabled = busy;
+  ui.test.disabled = busy;
+}
+
+function renderCollections(collections) {
+  collectionsReady = Array.isArray(collections);
+  const previous = destinationPreference?.connection === currentConnection
+    ? destinationPreference.collection : "";
+  ui.collection.replaceChildren(new Option("未分类（默认）", ""));
+  if (collectionsReady) {
+    collections.forEach((collection) => ui.collection.add(new Option(collection, collection)));
+  }
+  ui.collection.value = collectionsReady && collections.includes(previous) ? previous : "";
+  ui.collection.disabled = importing || !collectionsReady;
+  ui.collectionHint.textContent = !collectionsReady
+    ? "请重新加载新版 Paper Library，以支持指定导入分类。"
+    : previous && !collections.includes(previous)
+      ? "上次选择的分类已不存在，请重新选择；当前为未分类。"
+      : collections.length ? "PDF 和文献信息将导入所选分类，并记住本次选择。"
+        : "暂无分类，可先在 Paper Library 中创建；当前将导入未分类。";
 }
 
 async function refreshConnection() {
+  const refresh = ++connectionRefresh;
+  connectionLoading = true;
+  setBusy(importing);
+  collectionsReady = false;
+  ui.collection.disabled = true;
+  ui.refreshCollections.disabled = true;
   ui.connection.className = "conn-state";
   ui.connection.textContent = "正在检测…";
   try {
+    const stored = await chrome.storage.local.get(["paperlibToken", "paperlibPort"]);
     const reply = await chrome.runtime.sendMessage({ type: "paperlib:ping" });
+    if (refresh !== connectionRefresh) return;
     if (reply?.ok) {
+      currentConnection = `${stored.paperlibPort || 23987}:${stored.paperlibToken || ""}`;
       ui.connection.classList.add("ok");
       ui.connection.textContent = `已连接 · ${reply.papers ?? "—"} 篇`;
+      renderCollections(reply.collections);
     } else {
       ui.connection.classList.add("error");
       ui.connection.textContent = reply?.code === "bad-token" ? "Token 无效" : "未连接 Obsidian";
+      renderCollections(null);
+      ui.collectionHint.textContent = "连接 Obsidian 后可选择分类。";
     }
   } catch (_) {
+    if (refresh !== connectionRefresh) return;
     ui.connection.classList.add("error");
     ui.connection.textContent = "未连接 Obsidian";
+    renderCollections(null);
+    ui.collectionHint.textContent = "连接 Obsidian 后可选择分类。";
+  } finally {
+    if (refresh === connectionRefresh) {
+      connectionLoading = false;
+      setBusy(importing);
+    }
   }
 }
 
 async function importPaper(includePdf) {
-  if (!currentPaper) return;
+  if (!currentPaper || importing || connectionLoading) return;
+  const collection = collectionsReady ? ui.collection.value : "";
   setBusy(true);
   status("working", includePdf ? "正在获取 PDF，并交给 Obsidian 导入…" : "正在导入文献信息…");
   try {
@@ -261,6 +318,7 @@ async function importPaper(includePdf) {
       type: "paperlib:import",
       info: currentPaper,
       includePdf,
+      collection,
       tabId: currentTabId
     });
     if (reply?.ok) {
@@ -277,6 +335,7 @@ async function importPaper(includePdf) {
     }
     status(reply?.code === "needs-login" ? "login" : "error", reply?.error || "导入失败");
     if (reply?.code === "needs-login" || reply?.code === "no-pdf") ui.metadata.classList.add("emphasize");
+    if (reply?.code === "collection-not-found" || reply?.code === "upgrade-plugin") await refreshConnection();
   } catch (error) {
     status("error", String(error?.message || error || "导入失败"));
   } finally {
@@ -285,7 +344,8 @@ async function importPaper(includePdf) {
 }
 
 async function initialize() {
-  const stored = await chrome.storage.local.get(["paperlibToken", "paperlibPort"]);
+  const stored = await chrome.storage.local.get(["paperlibToken", "paperlibPort", "paperlibImportDestination"]);
+  destinationPreference = stored.paperlibImportDestination || null;
   ui.token.value = stored.paperlibToken || "";
   ui.port.value = stored.paperlibPort || 23987;
 
@@ -302,6 +362,15 @@ async function initialize() {
     await refreshConnection();
   });
   ui.test.addEventListener("click", refreshConnection);
+  ui.refreshCollections.addEventListener("click", refreshConnection);
+  ui.collection.addEventListener("change", async () => {
+    destinationPreference = { connection: currentConnection, collection: ui.collection.value };
+    try {
+      await chrome.storage.local.set({ paperlibImportDestination: destinationPreference });
+    } catch (_) {
+      status("error", "分类已选择，但无法记住本次选择。");
+    }
+  });
   ui.importPdf.addEventListener("click", () => { clearStatus(); void importPaper(true); });
   ui.metadata.addEventListener("click", () => { clearStatus(); void importPaper(false); });
 
