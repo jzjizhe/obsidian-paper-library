@@ -20,8 +20,12 @@
 
 * { box-sizing: border-box; }
 
+/* Chrome negotiates the toolbar popup's viewport from the document width. */
+html { width: 392px; min-width: 392px; }
+
 body {
   width: 392px;
+  min-width: 392px;
   max-height: 640px;
   margin: 0;
   overflow-y: auto;
