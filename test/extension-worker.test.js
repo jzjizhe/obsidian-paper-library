@@ -41,7 +41,7 @@ function event() {
 }
 
 function makeWorker(options = {}) {
-  const calls = { fetch: [], page: [], downloads: [], searches: [], tabs: [], removedTabs: [], progress: [] };
+  const calls = { fetch: [], page: [], downloads: [], searches: [], tabs: [], removedTabs: [], progress: [], badge: [] };
   const unexpected = [];
   const onChanged = event();
   const onUpdated = event();
@@ -55,6 +55,10 @@ function makeWorker(options = {}) {
       paperlibPort: 24568
     }) } },
     runtime: { onMessage: { addListener: (handler) => { listener = handler; } }, sendMessage: async (message) => { calls.progress.push(message); } },
+    action: {
+      setBadgeText: async (details) => { calls.badge.push(details.text); },
+      setBadgeBackgroundColor: async () => {}
+    },
     tabs: {
       onUpdated,
       sendMessage: async (tabId, message) => {
@@ -147,7 +151,8 @@ function makeWorker(options = {}) {
         assert.deepEqual(unexpected, [], "all fetches must use known mocks");
         assert.equal(onChanged.listeners.size, 0, "download listeners must be removed");
         assert.equal(onUpdated.listeners.size, 0, "navigation listeners must be removed");
-        assert.ok(calls.progress.every((message) => message.type === "paperlib:progress"),
+        assert.ok(calls.progress.every((message) => message.type === "paperlib:progress"
+          && (message.stage !== "done" || typeof message.ok === "boolean")),
           "progress reporting must never leak other payloads");
       }
     }
@@ -265,24 +270,29 @@ test("browser-download filePath JSON retains destination and cleanup", async () 
   assert.deepEqual(worker.calls.downloads, [{ url: PDF_URL, saveAs: false, conflictAction: "uniquify" }]);
   assert.deepEqual(worker.calls.searches, [{ id: 99 }]);
   assert.deepEqual(worker.calls.progress.map((message) => message.stage),
-    ["download", "download", "import"], "download bytes and import handoff must be reported");
+    ["download", "download", "import", "done"], "download bytes, import handoff, and completion must be reported");
+  assert.equal(worker.calls.progress.at(-1).ok, true);
+  assert.deepEqual(worker.calls.badge, ["…", "…", "…", ""],
+    "badge must show an active marker during the import and clear on completion");
 });
 
 test("popup progress stages cover binary, metadata, and fallback transports", async () => {
   const envelopeWorker = makeWorker({ page: { ok: true, base64: PDF_BYTES.toString("base64") } });
   assert.equal((await envelopeWorker.message(importMessage())).ok, true);
   assert.deepEqual(envelopeWorker.calls.progress.map((message) => [message.stage, Boolean(message.text)]),
-    [["download", true], ["import", false]]);
+    [["download", true], ["import", false], ["done", false]]);
+  assert.deepEqual(envelopeWorker.calls.badge, ["…", "…", ""]);
 
   const metadataWorker = makeWorker();
   await metadataWorker.message(importMessage({ includePdf: false }));
-  assert.deepEqual(metadataWorker.calls.progress.map((message) => message.stage), ["import"]);
+  assert.deepEqual(metadataWorker.calls.progress.map((message) => message.stage), ["import", "done"]);
   assert.match(metadataWorker.calls.progress[0].text, /文献信息/);
+  assert.deepEqual(metadataWorker.calls.badge, ["…", ""]);
 
   const fallbackWorker = makeWorker();
   await fallbackWorker.message(importMessage());
   assert.deepEqual(fallbackWorker.calls.progress.map((message) => message.stage),
-    ["download", "import"], "the pdfUrl fallback reports one final import stage");
+    ["download", "import", "done"], "the pdfUrl fallback reports one final import stage");
 });
 
 test("final pdfUrl JSON fallback retains destination", async () => {

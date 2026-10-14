@@ -459,7 +459,9 @@ async function initialize() {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "paperlib:progress" && progressActive) {
-    setProgress(message.stage, message);
+    // The worker's done event only drives the badge; the popup's own reply
+    // decides the success/failure rendering.
+    if (message.stage !== "done") setProgress(message.stage, message);
   }
 });
 

@@ -114,9 +114,23 @@ function delay(milliseconds) {
 }
 
 // The popup listens for these to show its compact progress card; failures to
-// deliver (popup already closed) must never break an import.
+// deliver (popup already closed) must never break an import. The toolbar
+// badge mirrors the progress so it stays visible after the popup closes.
+const BADGE_COLOR = "#7161d7";
+let activeImport = null;
 function reportProgress(payload) {
+  if (activeImport) activeImport = { ...activeImport, ...payload };
+  updateBadge(payload);
   chrome.runtime.sendMessage({ type: "paperlib:progress", ...payload }).catch(() => undefined);
+}
+
+function updateBadge(payload) {
+  const percent = Number.isFinite(payload.received) && Number.isFinite(payload.total) && payload.total > 0
+    ? `${Math.min(99, Math.max(1, Math.round((payload.received / payload.total) * 100)))}`
+    : null;
+  const text = payload.stage === "done" ? "" : (percent || "…");
+  chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR }).catch(() => undefined);
+  chrome.action.setBadgeText({ text }).catch(() => undefined);
 }
 
 async function warmPdfNavigation(url) {
@@ -495,9 +509,18 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     return true;
   }
   if (message?.type === "paperlib:import") {
+    activeImport = { stage: "discover" };
     importCurrentPaper(message.info || {}, message.includePdf !== false, message.tabId, message.collection ?? "")
-      .then(respond)
-      .catch((error) => respond({ ok: false, code: "error", error: String(error?.message || error) }));
+      .then((result) => {
+        activeImport = null;
+        reportProgress({ stage: "done", ok: Boolean(result?.ok) });
+        respond(result);
+      })
+      .catch((error) => {
+        activeImport = null;
+        reportProgress({ stage: "done", ok: false });
+        respond({ ok: false, code: "error", error: String(error?.message || error) });
+      });
     return true;
   }
   if (message?.type === "paperlib:lookup") {
