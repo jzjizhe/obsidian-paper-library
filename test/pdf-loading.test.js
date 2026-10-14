@@ -26,6 +26,29 @@ const file = { path: "Papers/with spaces & 中文.pdf", extension: "pdf" };
 const bytes = new TextEncoder().encode("%PDF-1.7 test document").buffer;
 const resourceUrl = "app://vault/with%20spaces%20%26%20%E4%B8%AD%E6%96%87.pdf?mtime=123";
 
+// A minimal but structurally valid single-page PDF that pdf-lib can parse,
+// used to exercise the annotation write path end to end.
+function buildMinimalPdf() {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>"
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((offset) => {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf).buffer;
+}
+
 function createPlugin(readBinary) {
   const plugin = Object.create(PaperLibraryPlugin.prototype);
   plugin.app = {
@@ -235,6 +258,41 @@ async function run() {
     };
     await protectedPlugin.openResearchSource(paper);
     assert.equal(opened, file, "the native reader entry must still open the same vault file");
+
+    // Native-reader annotations mutate the PDF file; the write path must fall
+    // back to the resource URL exactly like the rendering path.
+    {
+      const denied = new Error("EPERM: operation not permitted");
+      const previousFetch = globalThis.fetch;
+      globalThis.fetch = async (url) => {
+        assert.equal(url, resourceUrl);
+        return { ok: true, arrayBuffer: async () => buildMinimalPdf() };
+      };
+      let written;
+      const mutationPlugin = createPlugin(async () => { throw denied; });
+      mutationPlugin.pdfMutationQueues = new Map();
+      mutationPlugin.app.vault.modifyBinary = async (value, output) => {
+        assert.equal(value, file);
+        written = output;
+      };
+      mutationPlugin.settings.pdfAnnotations = [];
+      try {
+        const changed = await mutationPlugin.mutateLocalPdf(file.path, async () => true);
+        assert.equal(changed, true);
+        assert.equal(Buffer.from(written).subarray(0, 5).toString(), "%PDF-");
+        assert.ok(Buffer.byteLength(written) > 100);
+        const unchanged = await mutationPlugin.mutateLocalPdf(file.path, async () => false);
+        assert.equal(unchanged, false, "a no-op mutation must not rewrite the file");
+        const signed = Buffer.from("%PDF-1.4 fake /ByteRange [0 1 2 3]");
+        mutationPlugin.app.vault.readBinary = async () => signed.buffer;
+        await assert.rejects(mutationPlugin.mutateLocalPdf(file.path, async () => true),
+          /数字签名/, "signed PDFs must keep refusing file mutation");
+        // The queue must drain so later mutations are not chained forever.
+        assert.equal(mutationPlugin.pdfMutationQueues.size, 0);
+      } finally {
+        globalThis.fetch = previousFetch;
+      }
+    }
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.document = originalDocument;

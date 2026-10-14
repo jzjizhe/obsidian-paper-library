@@ -21517,7 +21517,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     if (!file) throw new Error("找不到本地 PDF 文件");
     const previous = this.pdfMutationQueues.get(path) || Promise.resolve();
     const current = previous.catch(() => {}).then(async () => {
-      const source = await this.app.vault.readBinary(file);
+      const source = await this.readPdfBinary(file);
       const sourceBytes = new Uint8Array(source);
       if (bytesContainAscii(sourceBytes, "/ByteRange") || bytesContainAscii(sourceBytes, "/Type/Sig")
         || bytesContainAscii(sourceBytes, "/Type /Sig")) {
