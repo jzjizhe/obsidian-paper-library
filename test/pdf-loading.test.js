@@ -4,8 +4,9 @@ const Module = require("node:module");
 const path = require("node:path");
 
 let pdfJsMock;
+const notices = [];
 const obsidianMock = {
-  ItemView: class {}, Menu: class {}, Modal: class {}, Notice: class {},
+  ItemView: class {}, Menu: class {}, Modal: class {}, Notice: class { constructor(message) { notices.push(message); } },
   Plugin: class {}, PluginSettingTab: class {}, Setting: class {},
   loadPdfJs: async () => pdfJsMock,
   normalizePath: (value) => String(value).replace(/\\/g, "/"),
@@ -65,6 +66,39 @@ function createPlugin(readBinary) {
   return plugin;
 }
 
+function eventTarget(target = {}) {
+  const handlers = new Map();
+  const capture = (options) => typeof options === "boolean" ? options : Boolean(options?.capture);
+  target.listeners = new Map();
+  target.listenerEntries = handlers;
+  target.addEventListener = (type, handler, options) => {
+    if (!handlers.has(type)) {
+      handlers.set(type, new Set());
+      target.listeners.set(type, (event = {}) => {
+        let result;
+        for (const entry of [...handlers.get(type) || []]) {
+          if (!handlers.get(type)?.has(entry)) continue;
+          if (entry.once) target.removeEventListener(type, entry.handler, entry.capture);
+          result = entry.handler(event);
+        }
+        return result;
+      });
+    }
+    if (![...handlers.get(type)].some((entry) => entry.handler === handler && entry.capture === capture(options))) {
+      handlers.get(type).add({ handler, capture: capture(options), once: Boolean(options?.once) });
+    }
+  };
+  target.removeEventListener = (type, handler, options) => {
+    const entries = handlers.get(type);
+    if (!entries) return;
+    for (const entry of entries) {
+      if (entry.handler === handler && entry.capture === capture(options)) entries.delete(entry);
+    }
+    if (!entries.size) { handlers.delete(type); target.listeners.delete(type); }
+  };
+  return target;
+}
+
 class Element {
   constructor(tag, options = {}, ownerDocument = globalThis.document) {
     this.tag = tag;
@@ -77,7 +111,8 @@ class Element {
     this.style = { setProperty(name, value) { this[name] = String(value); } };
     this.dataset = {};
     this.attributes = new Map();
-    this.listeners = new Map();
+    eventTarget(this);
+    for (const [name, value] of Object.entries(options.attr || {})) this.setAttribute(name, value);
     this.scrollLeft = this.scrollTop = this.clientLeft = this.clientTop = 0;
     this.classList = {
       contains: (name) => this.className.split(/\s+/).includes(name),
@@ -141,7 +176,6 @@ class Element {
     this.attributes.set(name, String(value));
   }
   getAttribute(name) { return name === "class" ? this.className : this.attributes.get(name) ?? null; }
-  addEventListener(name, handler) { this.listeners.set(name, handler); }
   contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
   matches(selector) {
     const match = /^([\w-]+)?((?:\.[\w-]+)*)(?:\[data-([\w-]+)(?:="([^"]*)")?\])?$/.exec(selector);
@@ -164,10 +198,10 @@ class Element {
 }
 
 function createDocument() {
-  const document = {
+  const document = eventTarget({
     createElement: (tag) => new Element(tag, {}, document),
     createDocumentFragment: () => new Element("#document-fragment", {}, document)
-  };
+  });
   document.body = document.createElement("body");
   return document;
 }
@@ -179,7 +213,10 @@ function testWorkspaceHighlightGesture() {
   let caretCalls = 0;
   let repaired;
   const window = {
-    addEventListener: (type, handler) => listeners.set(type, handler),
+    addEventListener: (type, handler, options) => {
+      if (type === "blur") assert.notEqual(options, true, "element blur must not cancel highlighting");
+      listeners.set(type, handler);
+    },
     removeEventListener: (type, handler) => {
       if (listeners.get(type) === handler) listeners.delete(type);
     },
@@ -236,19 +273,338 @@ function testWorkspaceHighlightGesture() {
   assert.equal(listeners.size, 0, "closing the PDF must remove gesture listeners");
 }
 
+function selectionPopupFixture() {
+  const document = createDocument();
+  const timers = new Map();
+  const window = eventTarget({
+    document, innerWidth: 800, innerHeight: 600,
+    setTimeout: (callback) => { const id = Symbol(); timers.set(id, callback); return id; },
+    clearTimeout: (id) => timers.delete(id)
+  });
+  document.defaultView = window;
+  const createDiv = document.body.createDiv.bind(document.body);
+  document.body.createDiv = (options) => {
+    const element = createDiv(options);
+    if (element.classList.contains("paperlib-pdf-selection-toolbar")) {
+      element.getBoundingClientRect = () => ({ width: 188, height: 36 });
+    }
+    return element;
+  };
+  const paper = { id: "selection-popup", pdfPath: file.path };
+  const workspace = { zoom: 1, highlights: [] };
+  const plugin = createPlugin(async () => bytes);
+  plugin.ensureResearchWorkspace = (value) => { assert.equal(value, paper); return workspace; };
+  plugin.persistResearchWorkspace = async () => {};
+  const view = new ResearchView({}, plugin);
+  view.app = plugin.app;
+  view.contentEl = view.containerEl = document.body.createDiv();
+  const textLayer = view.contentEl.createDiv({ cls: "paperlib-pdf-text-layer" });
+  const range = { cloneRange: () => ({}), compareBoundaryPoints: () => 0 };
+  const selection = {
+    rangeCount: 1, isCollapsed: false, getRangeAt: () => range,
+    removeAllRanges() { this.rangeCount = 0; this.isCollapsed = true; }
+  };
+  window.getSelection = () => selection;
+  const context = {
+    paper, text: "Selected text", page: 3, pdfPath: paper.pdfPath, sourceLeaf: {},
+    selectionSource: "workspace", rectCoordinateSpace: "pdf",
+    range: { beginIndex: 2, beginOffset: 1, endIndex: 4, endOffset: 5 },
+    pdfRects: [{ rect: [10, 20, 100, 40], quad: [10, 40, 100, 40, 10, 20, 100, 20] }],
+    dragSourceRect: { left: 250, right: 350, top: 200, bottom: 220, width: 100, height: 20 }
+  };
+  const calls = { snapshots: 0, repaired: [], painted: [], saved: [], toolbars: 0, refreshed: [] };
+  view.getCanvasSelection = (...args) => {
+    assert.deepEqual(args, [textLayer, textLayer, paper, 3, false]);
+    calls.snapshots += 1;
+    return context;
+  };
+  view.repairWorkspacePdfSelectionEnd = (...args) => calls.repaired.push(args);
+  view.paintPdfHighlight = (...args) => calls.painted.push(args);
+  view.renderCanvasToolbar = () => { calls.toolbars += 1; };
+  view.refreshPdfHighlights = (...args) => calls.refreshed.push(args);
+  plugin.saveCanvasHighlight = async (...args) => { calls.saved.push(args); };
+  const emit = (target, type, event = {}) => target.listeners.get(type)?.(event);
+  const flush = () => {
+    const pending = [...timers.values()];
+    timers.clear();
+    pending.forEach((callback) => callback());
+  };
+  const popup = () => document.body.querySelector(".paperlib-pdf-selection-toolbar");
+  const begin = (event = {}) => view.beginWorkspacePdfTextSelection(
+    { button: 0, pointerId: 7, ...event }, textLayer, paper, 3
+  );
+  const show = () => view.showWorkspacePdfSelectionToolbar(textLayer, paper, 3);
+  const click = (button) => emit(button, "click", { preventDefault() {}, stopPropagation() {} });
+  return { document, window, timers, view, plugin, paper, workspace, textLayer, range,
+    selection, context, calls, emit, flush, popup, begin, show, click };
+}
+
+async function testWorkspaceSelectionPopup() {
+  const noticesBefore = notices.length;
+  for (const [color, swatch, label] of [
+    ["yellow", "#ffd65a", "黄色"], ["orange", "#ff9f43", "橙色"],
+    ["green", "#7bd88f", "绿色"], ["blue", "#6ab7ff", "蓝色"], ["pink", "#ff86b7", "粉色"]
+  ]) {
+    const f = selectionPopupFixture();
+    f.begin();
+    assert.ok([...f.window.listenerEntries.get("blur")].every((entry) => !entry.capture),
+      "a focused link losing focus must not cancel the selection gesture");
+    assert.equal(f.popup(), null, "pointerdown must not interrupt native selection");
+    assert.equal(f.calls.snapshots, 0);
+    const end = { pointerId: 7, clientX: 350, clientY: 220 };
+    f.emit(f.window, "pointerup", end);
+    assert.equal(f.popup(), null, "pointerup must defer until native selection has settled");
+    assert.equal(f.timers.size, 1);
+    f.flush();
+    assert.deepEqual(f.calls.repaired, [[f.textLayer, end]]);
+    const toolbar = f.popup();
+    assert.ok(toolbar);
+    assert.equal(toolbar.parentNode, f.document.body, "popup must escape the scaled workspace");
+    assert.equal(toolbar.getAttribute("role"), "toolbar");
+    const buttons = toolbar.querySelectorAll("button");
+    assert.deepEqual(buttons.map((button) => button.dataset.color), ["yellow", "orange", "green", "blue", "pink"]);
+    const button = buttons.find((item) => item.dataset.color === color);
+    assert.equal(button.style["--swatch-color"], swatch);
+    assert.equal(button.getAttribute("aria-label"), `用${label}高亮`);
+    let prevented = 0;
+    let stopped = 0;
+    f.emit(f.document, "pointerdown", { target: button });
+    f.emit(toolbar, "pointerdown", {
+      preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; }
+    });
+    assert.equal(prevented, 1, "toolbar pointerdown must prevent native selection collapse");
+    assert.equal(stopped, 1);
+    assert.equal(f.selection.rangeCount, 1);
+    assert.equal(f.popup(), toolbar);
+    f.emit(f.document, "selectionchange");
+    assert.equal(f.popup(), toolbar, "unchanged selection must keep the popup open");
+    let finishSave;
+    f.plugin.saveCanvasHighlight = (...args) => {
+      f.calls.saved.push(args);
+      return new Promise((resolve) => { finishSave = resolve; });
+    };
+    f.view.getCanvasSelection = () => assert.fail("click must save the captured snapshot, not reread selection");
+    const saving = f.click(button);
+    assert.equal(f.popup(), null);
+    assert.equal(f.view.highlightColor, color);
+    assert.deepEqual(f.calls.painted, [[f.textLayer, f.context, color]]);
+    assert.equal(f.selection.rangeCount, 0);
+    assert.equal(f.calls.toolbars, 1);
+    assert.equal(f.calls.saved[0][0], f.context);
+    assert.equal(f.calls.saved[0][1], color);
+    assert.deepEqual(f.calls.refreshed, [], "authoritative highlights refresh only after persistence");
+    finishSave();
+    await saving;
+    assert.deepEqual(f.calls.refreshed, [[f.paper]]);
+    assert.equal(f.document.listeners.size + f.window.listeners.size, 0, "applying must remove popup listeners");
+  }
+
+  const f = selectionPopupFixture();
+  for (let index = 0; index < 2; index += 1) {
+    f.selection.rangeCount = 1;
+    f.selection.isCollapsed = false;
+    const snapshot = { ...f.context, text: `Selection ${index + 1}` };
+    f.view.getCanvasSelection = () => { f.calls.snapshots += 1; return snapshot; };
+    f.begin();
+    f.emit(f.window, "pointerup", { pointerId: 7 });
+    f.flush();
+    assert.ok(f.popup(), "applying a color must not disable subsequent selections");
+    await f.click(f.popup().querySelectorAll("button")[index]);
+  }
+  assert.deepEqual(f.calls.saved.map(([context, color]) => [context.text, color]),
+    [["Selection 1", "yellow"], ["Selection 2", "orange"]]);
+  assert.equal(f.calls.snapshots, 2);
+  assert.equal(notices.length, noticesBefore, "successful highlighting must not show an error Notice");
+
+  const failure = selectionPopupFixture();
+  const error = new Error("PDF is read-only");
+  failure.plugin.saveCanvasHighlight = async () => { throw error; };
+  const previousError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args);
+  try {
+    failure.show();
+    await failure.click(failure.popup().querySelector("button"));
+    assert.deepEqual(errors, [["Paper Library: failed to highlight PDF selection", error]]);
+    assert.deepEqual(notices.slice(noticesBefore), ["高亮失败：PDF is read-only"]);
+    assert.deepEqual(failure.calls.refreshed, [[failure.paper]], "failed optimistic paint must reconcile with saved highlights");
+    assert.equal(failure.popup(), null);
+    assert.equal(failure.document.listeners.size + failure.window.listeners.size, 0);
+  } finally {
+    console.error = previousError;
+    notices.splice(noticesBefore);
+  }
+}
+
+function testWorkspaceSelectionPopupLifecycle() {
+  for (const [target, type, event] of [
+    ["document", "pointerdown", {}], ["document", "keydown", { key: "Escape" }],
+    ["window", "scroll"], ["window", "resize"], ["window", "blur"],
+    ["visualViewport", "scroll"], ["visualViewport", "resize"],
+    ["document", "selectionchange"]
+  ]) {
+    const f = selectionPopupFixture();
+    f.window.visualViewport = eventTarget({ width: 320, height: 200 });
+    f.show();
+    f.emit(f.document, "keydown", { key: "Enter" });
+    assert.ok(f.popup(), "non-Escape keys must not dismiss the popup");
+    if (type === "selectionchange") f.selection.isCollapsed = true;
+    f.emit(target === "visualViewport" ? f.window.visualViewport : f[target], type, event);
+    assert.equal(f.popup(), null, `${target} ${type} must dismiss the popup`);
+    assert.equal(f.view.pdfSelectionToolbarCleanup, null);
+    assert.equal(f.document.listeners.size + f.window.listeners.size + f.window.visualViewport.listeners.size, 0);
+    assert.deepEqual(f.calls.saved, []);
+  }
+  for (const invalidate of [
+    (f) => { f.selection.rangeCount = 0; },
+    (f) => { f.range.compareBoundaryPoints = (boundary) => boundary === 0 ? 1 : 0; },
+    (f) => { f.range.compareBoundaryPoints = (boundary) => boundary === 2 ? 1 : 0; }
+  ]) {
+    const f = selectionPopupFixture();
+    f.show();
+    invalidate(f);
+    f.emit(f.document, "selectionchange");
+    assert.equal(f.popup(), null, "cleared or changed selection must dismiss the popup");
+  }
+
+  for (const action of ["dispose", "rerender", "tool", "zoom"]) {
+    for (const phase of ["gesture", "deferred", "open"]) {
+      const f = selectionPopupFixture();
+      const previousWindow = globalThis.window;
+      globalThis.window = f.window;
+      try {
+        f.begin();
+        if (phase !== "gesture") f.emit(f.window, "pointerup", { pointerId: 7 });
+        if (phase === "open") f.flush();
+        if (action === "dispose") f.view.disposeWorkspacePdfView();
+        if (action === "rerender") f.view.render();
+        if (action === "tool") {
+          f.view.toolMode = "ink";
+          f.view.refreshCanvasToolbar(f.view.contentEl, f.paper, f.workspace);
+        }
+        if (action === "zoom") {
+          const viewport = f.document.body.createDiv();
+          viewport.getBoundingClientRect = () => ({ left: 0, top: 0, width: 320, height: 200 });
+          const stage = viewport.createDiv();
+          f.view.installCanvasZoom(viewport, stage, stage.createDiv(), f.paper, f.workspace, 1000, 1000);
+          f.view.refreshWorkspacePdfResolution = () => {};
+          f.view.setZoom(f.paper, 1.5);
+        }
+        assert.equal(f.view.pdfSelectionGestureCleanup, null);
+        assert.equal(f.view.pdfSelectionToolbarTimer, null);
+        f.emit(f.window, "pointerup", { pointerId: 7 });
+        f.flush();
+        assert.equal(f.popup(), null, `${action} must cancel the ${phase} selection UI`);
+        assert.equal(f.document.listeners.size + f.window.listeners.size, 0);
+        assert.deepEqual(f.calls.saved, []);
+      } finally {
+        globalThis.window = previousWindow;
+      }
+    }
+  }
+
+  for (const button of [1, 2]) {
+    const f = selectionPopupFixture();
+    f.begin({ button });
+    assert.equal(f.window.listeners.size, 0, "non-primary buttons must not start text selection");
+  }
+  for (const cancel of ["pointercancel", "blur"]) {
+    const f = selectionPopupFixture();
+    f.begin();
+    f.emit(f.window, "pointerup", { pointerId: 8 });
+    assert.equal(f.timers.size, 0, "unrelated pointer release must not finish selection");
+    assert.equal(typeof f.view.pdfSelectionGestureCleanup, "function");
+    f.emit(f.window, cancel, { pointerId: 7 });
+    f.emit(f.window, "pointerup", { pointerId: 7 });
+    f.flush();
+    assert.equal(f.popup(), null);
+    assert.equal(f.window.listeners.size, 0);
+  }
+  for (const phase of ["release", "deferred"]) {
+    const f = selectionPopupFixture();
+    f.begin();
+    if (phase === "release") f.view.excerptDrag = {};
+    f.emit(f.window, "pointerup", { pointerId: 7 });
+    f.view.excerptDrag = {};
+    f.flush();
+    assert.equal(f.popup(), null, "excerpt dragging must never open the selection popup");
+  }
+  for (const mode of ["highlight", "ink", "ai-region"]) {
+    const f = selectionPopupFixture();
+    f.view.toolMode = mode;
+    f.begin();
+    f.show();
+    assert.equal(f.popup(), null);
+    assert.equal(f.window.listeners.size, 0);
+    if (mode === "highlight") {
+      let highlighted = 0;
+      f.view.handlePdfHighlight = () => { highlighted += 1; };
+      f.view.beginWorkspacePdfHighlight({ button: 0, pointerId: 7 }, f.textLayer, f.paper, 3);
+      f.emit(f.window, "pointerup", { pointerId: 7 });
+      f.flush();
+      assert.equal(highlighted, 1, "direct highlighter mode must retain its existing save path");
+      assert.equal(f.popup(), null);
+    }
+  }
+  for (const invalidate of [
+    (f) => { f.view.pdfRenderToken += 1; },
+    (f) => f.textLayer.remove(),
+    (f) => { f.view.toolMode = "highlight"; }
+  ]) {
+    const f = selectionPopupFixture();
+    f.begin();
+    f.emit(f.window, "pointerup", { pointerId: 7 });
+    invalidate(f);
+    f.flush();
+    assert.equal(f.popup(), null, "a stale deferred callback must not open the popup");
+  }
+  for (const context of [null, { text: "" }, { text: "Text", pdfRects: [] }, { text: "Text", pdfRects: [{}] }]) {
+    const f = selectionPopupFixture();
+    f.view.getCanvasSelection = () => context;
+    f.show();
+    assert.equal(f.popup(), null, "incomplete selection snapshots must not open the popup");
+  }
+}
+
+function testWorkspaceSelectionPopupPosition() {
+  for (const visual of [false, true]) {
+    for (const rect of [
+      { left: -100, right: -20, top: 10, bottom: 30 },
+      { left: 500, right: 600, top: 210, bottom: 230 },
+      { left: 100, right: 200, top: 140, bottom: 160 }
+    ]) {
+      const f = selectionPopupFixture();
+      Object.assign(f.window, { innerWidth: 320, innerHeight: 200 });
+      const bounds = { offsetLeft: visual ? 30 : 0, offsetTop: visual ? 40 : 0, width: 320, height: 200 };
+      if (visual) f.window.visualViewport = eventTarget(bounds);
+      f.context.dragSourceRect = rect;
+      f.show();
+      const x = parseFloat(f.popup().style.left);
+      const y = parseFloat(f.popup().style.top);
+      assert.ok(x >= bounds.offsetLeft + 8 && x + 188 <= bounds.offsetLeft + bounds.width - 8,
+        "popup must remain inside the compact viewport horizontally");
+      assert.ok(y >= bounds.offsetTop + 8 && y + 36 <= bounds.offsetTop + bounds.height - 8,
+        "popup must remain inside the compact viewport vertically");
+      if (!visual && rect.top === 10) assert.equal(y, rect.bottom + 8, "popup must flip below a selection near the top");
+      if (!visual && rect.top === 140) assert.equal(y, rect.top - 36 - 8, "popup should prefer above the selection");
+      f.view.dismissWorkspacePdfSelectionToolbar();
+    }
+  }
+}
+
 async function testWorkspaceRendering() {
   const previousWindow = globalThis.window;
   const document = createDocument();
   const timers = new Map();
   const openedUrls = [];
   let selection = null;
-  const window = {
+  const window = eventTarget({
     document, devicePixelRatio: 2,
     getSelection: () => selection,
     open: (...args) => openedUrls.push(args),
     setTimeout: (callback) => { const id = Symbol(); timers.set(id, callback); return id; },
     clearTimeout: (id) => timers.delete(id)
-  };
+  });
   document.defaultView = window;
   globalThis.window = window;
   try {
@@ -635,7 +991,7 @@ async function run() {
       }
     };
     globalThis.document = createDocument();
-    globalThis.window = { document: globalThis.document, devicePixelRatio: 2 };
+    globalThis.window = eventTarget({ document: globalThis.document, devicePixelRatio: 2 });
     globalThis.document.defaultView = globalThis.window;
     let readCalls = 0;
     globalThis.fetch = async (url) => {
@@ -661,7 +1017,11 @@ async function run() {
       assert.equal(host.find("paperlib-pdf-loading").length, 0);
       const textLayer = host.find("paperlib-pdf-text-layer")[0];
       let selected = false;
-      view.scheduleExcerptDrag = () => { selected = true; };
+      view.scheduleExcerptDrag = () => {
+        assert.equal(typeof view.pdfSelectionGestureCleanup, "function",
+          "text selection must begin before scheduling an excerpt drag");
+        selected = true;
+      };
       textLayer.listeners.get("pointerdown")({ button: 0 });
       assert.equal(selected, true, "the rendered text layer must retain selection handlers");
       const readsBefore = readCalls;
@@ -827,6 +1187,9 @@ async function run() {
     }
     await testWorkspaceRendering();
     testWorkspaceHighlightGesture();
+    await testWorkspaceSelectionPopup();
+    testWorkspaceSelectionPopupLifecycle();
+    testWorkspaceSelectionPopupPosition();
     assert.equal(loggedErrors.length, 2, "workspace rendering must not introduce unexpected errors");
   } finally {
     globalThis.fetch = originalFetch;

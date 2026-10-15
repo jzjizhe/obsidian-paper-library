@@ -3391,7 +3391,7 @@ class PaperLibraryView extends ItemView {
     });
     card.addEventListener("dblclick", (event) => {
       event.preventDefault();
-      void this.plugin.openPaperPdf(paper, { native: true });
+      void this.plugin.openPaperPdf(paper);
     });
   }
 
@@ -4018,7 +4018,7 @@ class PaperLibraryView extends ItemView {
           void this.plugin.saveSettings().catch((error) => (
             console.warn("Paper Library: opened-paper timestamp save unavailable", error)
           ));
-          void this.plugin.openPaperPdf(paper, { native: true });
+          void this.plugin.openPaperPdf(paper);
           return;
         }
         if (mobile) {
@@ -4057,7 +4057,7 @@ class PaperLibraryView extends ItemView {
         void this.plugin.saveSettings().catch((error) => (
           console.warn("Paper Library: opened-paper timestamp save unavailable", error)
         ));
-        await this.plugin.openPaperPdf(paper, { native: true });
+        await this.plugin.openPaperPdf(paper);
       });
       row.addEventListener("contextmenu", (event) => this.showPaperContextMenu(event, paper));
       if (!this.plugin.isMobileApp()) {
@@ -5804,6 +5804,8 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   refreshCanvasToolbar(root, paper, workspace) {
+    this.dismissWorkspacePdfSelectionToolbar();
+    this.pdfSelectionGestureCleanup?.();
     if (!root) return;
     root.toggleClass("is-highlight-mode", this.toolMode === "highlight");
     root.toggleClass("is-ink-mode", this.toolMode === "ink");
@@ -5817,6 +5819,8 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   disposeWorkspacePdfView() {
+    this.dismissWorkspacePdfSelectionToolbar();
+    this.pdfSelectionGestureCleanup?.();
     this.pdfRenderToken += 1;
     this.pdfObserver?.disconnect();
     this.pdfResizeObserver?.disconnect();
@@ -5860,7 +5864,8 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   workspacePdfPageIsSelected(element) {
-    if (this.excerptDrag || this.inkDrawingCleanup || this.aiRegionCleanup || this.pdfHighlightGestureCleanup) return true;
+    if (this.excerptDrag || this.inkDrawingCleanup || this.aiRegionCleanup
+      || this.pdfHighlightGestureCleanup || this.pdfSelectionGestureCleanup) return true;
     const selection = element.ownerDocument?.defaultView?.getSelection?.();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
     try { return selection.getRangeAt(0).intersectsNode(element); } catch (_) { return false; }
@@ -6035,14 +6040,143 @@ class PaperResearchWorkspaceView extends ItemView {
     });
   }
 
+  beginWorkspacePdfTextSelection(event, textLayer, paper, pageNumber) {
+    if (event.button !== 0 || this.toolMode !== "select") return;
+    this.dismissWorkspacePdfSelectionToolbar();
+    this.pdfSelectionGestureCleanup?.();
+    const owner = textLayer.ownerDocument.defaultView;
+    const token = this.pdfRenderToken;
+    const cleanup = () => {
+      owner.removeEventListener("pointerup", up, true);
+      owner.removeEventListener("pointercancel", cleanup, true);
+      owner.removeEventListener("blur", cleanup);
+      if (this.pdfSelectionGestureCleanup === cleanup) this.pdfSelectionGestureCleanup = null;
+    };
+    const up = (end) => {
+      if (event.pointerId !== undefined && end.pointerId !== event.pointerId) return;
+      const dragging = Boolean(this.excerptDrag);
+      cleanup();
+      if (dragging) return;
+      const timer = owner.setTimeout(() => {
+        if (this.pdfSelectionToolbarTimer?.id !== timer) return;
+        this.pdfSelectionToolbarTimer = null;
+        if (token !== this.pdfRenderToken || !textLayer.isConnected
+          || this.toolMode !== "select" || this.excerptDrag) return;
+        this.repairWorkspacePdfSelectionEnd(textLayer, end);
+        this.showWorkspacePdfSelectionToolbar(textLayer, paper, pageNumber);
+      }, 0);
+      this.pdfSelectionToolbarTimer = { id: timer, owner };
+    };
+    this.pdfSelectionGestureCleanup = cleanup;
+    owner.addEventListener("pointerup", up, true);
+    owner.addEventListener("pointercancel", cleanup, true);
+    owner.addEventListener("blur", cleanup);
+  }
+
+  dismissWorkspacePdfSelectionToolbar() {
+    const timer = this.pdfSelectionToolbarTimer;
+    if (timer) timer.owner.clearTimeout(timer.id);
+    this.pdfSelectionToolbarTimer = null;
+    this.pdfSelectionToolbarCleanup?.();
+  }
+
+  showWorkspacePdfSelectionToolbar(textLayer, paper, pageNumber) {
+    this.dismissWorkspacePdfSelectionToolbar();
+    if (this.toolMode !== "select" || !textLayer.isConnected || this.excerptDrag) return;
+    const context = this.getCanvasSelection(textLayer, textLayer, paper, pageNumber, false);
+    if (!context?.text || !context.pdfRects?.length || !context.dragSourceRect) return;
+    const doc = textLayer.ownerDocument;
+    const owner = doc.defaultView;
+    const selection = owner.getSelection();
+    const selectedRange = selection.getRangeAt(0).cloneRange();
+    const token = this.pdfRenderToken;
+    const toolbar = doc.body.createDiv({
+      cls: "paperlib-pdf-selection-toolbar",
+      attr: { role: "toolbar", "aria-label": "选中文字的高亮颜色" }
+    });
+    const current = () => token === this.pdfRenderToken && textLayer.isConnected && this.toolMode === "select";
+    toolbar.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
+      const button = toolbar.createEl("button", {
+        cls: "paperlib-pdf-selection-color",
+        attr: { type: "button", "aria-label": `用${color.label}高亮`, title: `${color.label}高亮` }
+      });
+      button.dataset.color = color.id;
+      button.style.setProperty("--swatch-color", color.value);
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!current() || !toolbar.isConnected) return;
+        this.dismissWorkspacePdfSelectionToolbar();
+        this.highlightColor = color.id;
+        this.paintPdfHighlight(textLayer, context, color.id);
+        selection.removeAllRanges();
+        this.refreshCanvasToolbar(itemViewContentRoot(this), paper, this.plugin.ensureResearchWorkspace(paper));
+        try {
+          await this.plugin.saveCanvasHighlight(context, color.id);
+        } catch (error) {
+          console.error("Paper Library: failed to highlight PDF selection", error);
+          new Notice(`高亮失败：${error.message || error}`);
+        } finally {
+          if (current()) this.refreshPdfHighlights(paper);
+        }
+      });
+    });
+    const popup = toolbar.getBoundingClientRect();
+    const rect = context.dragSourceRect;
+    const viewport = owner.visualViewport;
+    const left = viewport?.offsetLeft || 0;
+    const top = viewport?.offsetTop || 0;
+    const right = left + (viewport?.width || owner.innerWidth);
+    const bottom = top + (viewport?.height || owner.innerHeight);
+    const x = Math.min(right - popup.width - 8, Math.max(left + 8, (rect.left + rect.right - popup.width) / 2));
+    const y = rect.top - popup.height - 8 >= top + 8 ? rect.top - popup.height - 8 : rect.bottom + 8;
+    toolbar.style.left = `${Math.max(left + 8, x)}px`;
+    toolbar.style.top = `${Math.max(top + 8, Math.min(bottom - popup.height - 8, y))}px`;
+    const dismiss = () => this.dismissWorkspacePdfSelectionToolbar();
+    const outside = (event) => { if (!toolbar.contains(event.target)) dismiss(); };
+    const keydown = (event) => { if (event.key === "Escape" || event.metaKey || event.ctrlKey) dismiss(); };
+    const selectionChanged = () => {
+      if (!selection.rangeCount || selection.isCollapsed) { dismiss(); return; }
+      const range = selection.getRangeAt(0);
+      if (range.compareBoundaryPoints(0, selectedRange) || range.compareBoundaryPoints(2, selectedRange)) dismiss();
+    };
+    doc.addEventListener("pointerdown", outside, true);
+    doc.addEventListener("keydown", keydown, true);
+    doc.addEventListener("selectionchange", selectionChanged);
+    owner.addEventListener("scroll", dismiss, true);
+    owner.addEventListener("resize", dismiss);
+    owner.addEventListener("blur", dismiss);
+    viewport?.addEventListener("resize", dismiss);
+    viewport?.addEventListener("scroll", dismiss);
+    const leafChange = this.app.workspace?.on?.("active-leaf-change", dismiss);
+    this.pdfSelectionToolbarCleanup = () => {
+      toolbar.remove();
+      doc.removeEventListener("pointerdown", outside, true);
+      doc.removeEventListener("keydown", keydown, true);
+      doc.removeEventListener("selectionchange", selectionChanged);
+      owner.removeEventListener("scroll", dismiss, true);
+      owner.removeEventListener("resize", dismiss);
+      owner.removeEventListener("blur", dismiss);
+      viewport?.removeEventListener("resize", dismiss);
+      viewport?.removeEventListener("scroll", dismiss);
+      if (leafChange) this.app.workspace.offref(leafChange);
+      this.pdfSelectionToolbarCleanup = null;
+    };
+  }
+
   beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber) {
     if (event.button !== 0) return;
+    this.dismissWorkspacePdfSelectionToolbar();
     this.pdfHighlightGestureCleanup?.();
     const window = textLayer.ownerDocument.defaultView;
     const cleanup = () => {
       window.removeEventListener("pointerup", up, true);
       window.removeEventListener("pointercancel", cleanup, true);
-      window.removeEventListener("blur", cleanup, true);
+      window.removeEventListener("blur", cleanup);
       if (this.pdfHighlightGestureCleanup === cleanup) this.pdfHighlightGestureCleanup = null;
     };
     const up = (end) => {
@@ -6053,7 +6187,7 @@ class PaperResearchWorkspaceView extends ItemView {
     this.pdfHighlightGestureCleanup = cleanup;
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", cleanup, true);
-    window.addEventListener("blur", cleanup, true);
+    window.addEventListener("blur", cleanup);
   }
 
   repairWorkspacePdfSelectionEnd(textLayer, event) {
@@ -6520,7 +6654,10 @@ class PaperResearchWorkspaceView extends ItemView {
     }, true);
     textLayer.addEventListener("pointerdown", (event) => {
       if (this.toolMode === "highlight") this.beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber);
-      else this.scheduleExcerptDrag(event, textLayer, paper, pageNumber);
+      else {
+        this.beginWorkspacePdfTextSelection(event, textLayer, paper, pageNumber);
+        this.scheduleExcerptDrag(event, textLayer, paper, pageNumber);
+      }
     });
     textLayer.addEventListener("contextmenu", (event) => (
       this.showPdfHighlightMenu(event, paper, pageNumber, pageData.textContent.items)
@@ -7132,6 +7269,7 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   beginExcerptDrag(event, textLayer, paper, pageNumber, preparedContext = null) {
+    this.dismissWorkspacePdfSelectionToolbar();
     const context = preparedContext || this.getCanvasSelection(textLayer, event.target, paper, pageNumber);
     if (!context) return;
     const ghost = document.body.createDiv({ cls: "paperlib-excerpt-drag-ghost" });

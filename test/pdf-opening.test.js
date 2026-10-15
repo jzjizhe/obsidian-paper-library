@@ -107,7 +107,7 @@ async function run() {
       assert.equal(calls.length, 0, "single click must select without opening a reader");
       assert.equal(plugin.uiState.selectedId, paper.id);
       await row.listeners.get("dblclick")(event());
-      assert.deepEqual(calls, [{ type: "pdf", paper, options: { native: true } }]);
+      assert.deepEqual(calls, [{ type: "pdf", paper, options: undefined }]);
       assert.ok(paper.lastOpened);
       calls.length = 0;
       view.selectionMode = true;
@@ -133,7 +133,7 @@ async function run() {
     const mobileRow = mobile.view.tableHost.querySelectorAll(".paperlib-paper-row")[0];
     await mobileRow.listeners.get("click")(event());
     await mobileRow.listeners.get("click")(event());
-    assert.deepEqual(mobile.calls, [{ type: "pdf", paper: mobile.paper, options: { native: true } }]);
+    assert.deepEqual(mobile.calls, [{ type: "pdf", paper: mobile.paper, options: undefined }]);
     await mobileRow.listeners.get("dblclick")(event());
     assert.equal(mobile.calls.length, 1, "synthetic mobile double-click must avoid opening twice");
 
@@ -145,7 +145,7 @@ async function run() {
       await card.listeners.get("click")(event());
       assert.equal(daily.calls.length, 0);
       await card.listeners.get("dblclick")(event());
-      assert.deepEqual(daily.calls, [{ type: "pdf", paper: daily.paper, options: { native: true } }]);
+      assert.deepEqual(daily.calls, [{ type: "pdf", paper: daily.paper, options: undefined }]);
     }
 
     const missing = createView({ pdfPath: "" });
