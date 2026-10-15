@@ -9563,20 +9563,6 @@ button.paperlib-file-open {
   position: relative;
 }
 
-.paperlib-native-pdf-reload-snapshot {
-  position: absolute;
-  z-index: 70;
-  overflow: hidden;
-  pointer-events: none;
-  background: var(--background-primary);
-}
-
-.paperlib-native-pdf-reload-snapshot > canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
 .paperlib-native-pdf-tools {
   position: absolute;
   z-index: 90;

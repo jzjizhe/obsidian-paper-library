@@ -9452,8 +9452,6 @@ module.exports = class PaperLibraryPlugin extends Plugin {
     this.conferenceRankingDatabaseLastAttemptAt = 0;
     this.conferenceRankingLookup = null;
     this.pdfMutationQueues = new Map();
-    this.nativePdfReloadGuards = new Map();
-    this.nativePdfReloadStopped = false;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -9628,9 +9626,6 @@ module.exports = class PaperLibraryPlugin extends Plugin {
   }
 
   onunload() {
-    this.nativePdfReloadStopped = true;
-    for (const guard of this.nativePdfReloadGuards?.values?.() || []) guard.cancel();
-    this.nativePdfReloadGuards?.clear();
     this.stopExtensionServer();
     this.composerMountObserver?.disconnect?.();
     this.composerMountObserver = null;
@@ -16195,273 +16190,6 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       });
   }
 
-  getNativePdfReadingState(leaf) {
-    const viewer = leaf?.view?.viewer;
-    const application = viewer?.child?.pdfViewer;
-    const pdfViewer = application?.pdfViewer;
-    const scroller = application?.dom?.viewerContainerEl;
-    const bounds = scroller?.getBoundingClientRect?.();
-    if (!application?.pdfDocument || !pdfViewer?.getPageView || !scroller
-      || !bounds?.width || !bounds.height || !application.isInitialViewSet || typeof viewer.loadFile !== "function"
-      || typeof application.pdfLinkService?.setHash !== "function") return null;
-    const location = application.location || pdfViewer._location;
-    const pageNumber = Number(location?.pageNumber || pdfViewer.currentPageNumber);
-    const scale = Number(pdfViewer.currentScale);
-    if (!Number.isInteger(pageNumber) || pageNumber < 1 || !Number.isFinite(scale) || scale <= 0) return null;
-    const page = pdfViewer.getPageView(pageNumber - 1);
-    const point = page?.getPagePoint?.(scroller.scrollLeft - page.div.offsetLeft, scroller.scrollTop - page.div.offsetTop);
-    return {
-      viewer, application, pdfViewer, scroller, pageNumber, scale,
-      scaleValue: pdfViewer.currentScaleValue || String(scale),
-      rotation: Number(pdfViewer.pagesRotation) || 0,
-      scrollMode: pdfViewer.scrollMode,
-      spreadMode: pdfViewer.spreadMode,
-      left: Number.isFinite(location?.left) ? location.left : Number(point?.[0]) || 0,
-      top: Number.isFinite(location?.top) ? location.top : Number(point?.[1]) || 0
-    };
-  }
-
-  createNativePdfReloadSnapshot(leaf, scroller) {
-    const container = leaf.view.containerEl;
-    const document = container.ownerDocument;
-    const window = document.defaultView;
-    const rect = scroller.getBoundingClientRect();
-    const bounds = {
-      left: rect.left + scroller.clientLeft, top: rect.top + scroller.clientTop,
-      width: scroller.clientWidth, height: scroller.clientHeight
-    };
-    bounds.right = bounds.left + bounds.width;
-    bounds.bottom = bounds.top + bounds.height;
-    const hostBounds = container.getBoundingClientRect();
-    const sources = [...scroller.querySelectorAll(".page canvas")].filter((canvas) => {
-      const rect = canvas.getBoundingClientRect();
-      return canvas.width && canvas.height && rect.width && rect.height
-        && rect.bottom > bounds.top && rect.top < bounds.bottom
-        && rect.right > bounds.left && rect.left < bounds.right;
-    });
-    if (!sources.length) return null;
-    const layer = document.createElement("div");
-    layer.className = "paperlib-native-pdf-reload-snapshot";
-    layer.setAttribute("aria-hidden", "true");
-    Object.assign(layer.style, {
-      left: `${bounds.left - hostBounds.left - container.clientLeft + container.scrollLeft}px`,
-      top: `${bounds.top - hostBounds.top - container.clientTop + container.scrollTop}px`,
-      width: `${bounds.width}px`, height: `${bounds.height}px`
-    });
-    const canvas = document.createElement("canvas");
-    const ratio = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.ceil(bounds.width * ratio);
-    canvas.height = Math.ceil(bounds.height * ratio);
-    const context = canvas.getContext("2d");
-    if (!context) return null;
-    context.scale(ratio, ratio);
-    let background = scroller;
-    while (background) {
-      const color = window.getComputedStyle(background).backgroundColor;
-      if (color && color !== "transparent" && color !== "rgba(0, 0, 0, 0)") {
-        context.fillStyle = color;
-        context.fillRect(0, 0, bounds.width, bounds.height);
-        break;
-      }
-      background = background.parentElement;
-    }
-    for (const source of sources) {
-      const rect = source.getBoundingClientRect();
-      context.filter = window.getComputedStyle(source).filter || "none";
-      context.drawImage(source, rect.left - bounds.left, rect.top - bounds.top, rect.width, rect.height);
-    }
-    layer.appendChild(canvas);
-    for (const svg of scroller.querySelectorAll(".paperlib-native-pdf-ink-layer")) {
-      const rect = svg.getBoundingClientRect();
-      if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
-      const copy = svg.cloneNode(true);
-      Object.assign(copy.style, {
-        position: "absolute", left: `${rect.left - bounds.left}px`, top: `${rect.top - bounds.top}px`,
-        width: `${rect.width}px`, height: `${rect.height}px`, pointerEvents: "none"
-      });
-      copy.querySelectorAll("*").forEach((element) => { element.style.pointerEvents = "none"; });
-      layer.appendChild(copy);
-    }
-    container.appendChild(layer);
-    return layer;
-  }
-
-  prepareNativePdfReloads(pdfPath) {
-    if (this.nativePdfReloadStopped) return [];
-    const guards = [];
-    for (const leaf of this.app.workspace?.getLeavesOfType?.("pdf") || []) {
-      if (normalizePath(leaf.view?.file?.path || "") !== pdfPath) continue;
-      try {
-        const guard = this.stabilizeNativePdfReload(leaf, pdfPath);
-        if (guard) guards.push(guard);
-      } catch (error) {
-        console.warn("Paper Library: native PDF reload stabilization unavailable", error);
-      }
-    }
-    return guards;
-  }
-
-  stabilizeNativePdfReload(leaf, pdfPath) {
-    const previous = this.nativePdfReloadGuards?.get(leaf.view?.viewer);
-    if (previous?.pdfPath === pdfPath) {
-      previous.arm();
-      return previous;
-    }
-    previous?.cancel();
-    let saved = this.getNativePdfReadingState(leaf);
-    if (!saved) return null;
-    const { viewer, application, scroller } = saved;
-    this.nativePdfReloadGuards ||= new Map();
-    const original = viewer.loadFile;
-    const hadOwnLoader = Object.prototype.hasOwnProperty.call(viewer, "loadFile");
-    const child = viewer.child;
-    const originalSubpath = child.applySubpath;
-    const hadOwnSubpath = Object.prototype.hasOwnProperty.call(child, "applySubpath");
-    const eventBus = application.eventBus;
-    const window = leaf.view.containerEl.ownerDocument.defaultView;
-    let snapshot = null;
-    try { snapshot = this.createNativePdfReloadSnapshot(leaf, scroller); }
-    catch (error) { console.warn("Paper Library: failed to capture PDF reload snapshot", error); }
-    let resolve;
-    const ready = new Promise((done) => { resolve = done; });
-    let disposed = false;
-    let started = false;
-    let interrupted = false;
-    let positioned = false;
-    let observedDocument = null;
-    let pagesSettled = false;
-    let expectedSubpath = null;
-    let revision = 1;
-    let loadingRevision = 0;
-    let generation = 0;
-    let frame = null;
-    let beforeDocument = application.pdfDocument;
-    let guard;
-    const cleanup = () => {
-      if (disposed) return;
-      disposed = true;
-      window.clearTimeout(timeout);
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      snapshot?.remove();
-      snapshot = null;
-      for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) {
-        leaf.view.containerEl.removeEventListener(event, onInput, true);
-      }
-      if (viewer.loadFile === wrapped) {
-        if (hadOwnLoader) viewer.loadFile = original;
-        else delete viewer.loadFile;
-      }
-      if (child.applySubpath === wrappedSubpath) {
-        if (hadOwnSubpath) child.applySubpath = originalSubpath;
-        else delete child.applySubpath;
-      }
-      eventBus?._off?.("documenterror", onDocumentError);
-      if (this.nativePdfReloadGuards.get(viewer) === guard) this.nativePdfReloadGuards.delete(viewer);
-      observedDocument = null;
-      beforeDocument = null;
-      saved = null;
-      resolve();
-    };
-    const onDocumentError = () => {
-      if (!started || loadingRevision === revision) cleanup();
-    };
-    const onInput = (event) => {
-      const navigationKey = event?.type === "keydown"
-        && (event.ctrlKey || event.metaKey || /^(Arrow|Page)|^(Home|End)$/.test(event.key || ""));
-      const marking = this.nativePdfStates?.get(leaf.view.containerEl)?.mode;
-      const drawing = ["pointerdown", "touchstart"].includes(event?.type)
-        && marking && event.target?.closest?.(".page");
-      if (drawing || (event?.type !== "wheel" && !navigationKey
-        && event?.target?.closest?.(".paperlib-native-pdf-tools"))) return;
-      interrupted = true;
-      snapshot?.remove();
-      snapshot = null;
-    };
-    const wrappedSubpath = function (...args) {
-      if (args[0] !== expectedSubpath) onInput();
-      return originalSubpath.apply(this, args);
-    };
-    const check = () => {
-      frame = null;
-      if (disposed) return;
-      if (!leaf.view?.containerEl?.isConnected || window.closed || viewer.child !== child
-        || normalizePath(leaf.view?.file?.path || "") !== pdfPath) return cleanup();
-      const pdfViewer = application.pdfViewer;
-      if (started && application.pdfDocument && application.pdfDocument !== beforeDocument
-        && application.isInitialViewSet) {
-        if (observedDocument !== application.pdfDocument) {
-          observedDocument = application.pdfDocument;
-          positioned = false;
-          pagesSettled = !pdfViewer.pagesPromise;
-          const document = observedDocument;
-          Promise.resolve(pdfViewer.pagesPromise).then(() => {
-            if (!disposed && observedDocument === document) { pagesSettled = true; positioned = false; }
-          }, cleanup);
-        }
-        if (!positioned) {
-          positioned = true;
-          if (!interrupted) {
-            pdfViewer.pagesRotation = saved.rotation;
-            if (Number.isInteger(saved.scrollMode) && saved.scrollMode >= 0) pdfViewer.scrollMode = saved.scrollMode;
-            if (Number.isInteger(saved.spreadMode) && saved.spreadMode >= 0) pdfViewer.spreadMode = saved.spreadMode;
-            const zoom = ["auto", "page-width", "page-height", "page-fit"].includes(saved.scaleValue)
-              ? saved.scaleValue : saved.scale * 100;
-            const page = Math.min(saved.pageNumber, application.pdfDocument.numPages);
-            application.pdfLinkService.setHash(`page=${page}&zoom=${zoom},${saved.left},${saved.top}`);
-          }
-        }
-        const pageNumber = interrupted ? pdfViewer.currentPageNumber
-          : Math.min(saved.pageNumber, application.pdfDocument.numPages);
-        const page = pdfViewer.getPageView(pageNumber - 1);
-        // PDF.js RenderingStates.FINISHED is 3.
-        if (loadingRevision === revision && pagesSettled
-          && page?.renderingState === 3 && page.canvas?.isConnected) return cleanup();
-      }
-      frame = window.requestAnimationFrame(checkSafely);
-    };
-    const checkSafely = () => {
-      try { check(); }
-      catch (error) {
-        cleanup();
-        console.warn("Paper Library: native PDF reload restoration unavailable", error);
-      }
-    };
-    const wrapped = (...args) => {
-      if (disposed) return original.apply(viewer, args);
-      if (interrupted || normalizePath(args[0]?.path || "") !== pdfPath || args[1]) {
-        cleanup();
-        return original.apply(viewer, args);
-      }
-      started = true;
-      loadingRevision = Math.min(loadingRevision + 1, revision);
-      positioned = false;
-      const current = ++generation;
-      expectedSubpath = `#page=${saved.pageNumber}&offset=${saved.left},${saved.top},${saved.scale}`;
-      let result;
-      try { result = original.call(viewer, args[0], expectedSubpath, ...args.slice(2)); }
-      catch (error) { cleanup(); throw error; }
-      Promise.resolve(result).catch(() => {
-        if (generation === current && loadingRevision === revision) cleanup();
-      });
-      return result;
-    };
-    const timeout = window.setTimeout(cleanup, 8000);
-    guard = {
-      ready, cancel: cleanup, pdfPath, arm: () => { revision += 1; },
-      canAnnotate: () => disposed || (positioned && application.pdfDocument === observedDocument
-        && application.pdfViewer.getPageView(application.pdfViewer.currentPageNumber - 1)?.renderingState === 3)
-    };
-    viewer.loadFile = wrapped;
-    if (typeof originalSubpath === "function") child.applySubpath = wrappedSubpath;
-    eventBus?._on?.("documenterror", onDocumentError);
-    this.nativePdfReloadGuards.set(viewer, guard);
-    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) {
-      leaf.view.containerEl.addEventListener(event, onInput, true);
-    }
-    frame = window.requestAnimationFrame(checkSafely);
-    return guard;
-  }
-
   setupNativePdfToolbar() {
     const mount = () => {
       if (this.nativePdfMountTimer) window.clearTimeout(this.nativePdfMountTimer);
@@ -16638,7 +16366,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       if (!this.nativePdfBindings.has(container)) {
         const pointerDown = (event) => {
           const active = this.nativePdfStates.get(container);
-          if (active?.busy || this.nativePdfReloadGuards?.get(leaf.view?.viewer)?.canAnnotate() === false) return;
+          if (active?.busy) return;
           const pageEl = event.target?.closest?.(".page[data-page-number], .page");
           if (event.button === 2 && pageEl && container.contains(pageEl)) {
             const file = leaf.view?.file || this.app.workspace.getActiveFile();
@@ -16671,8 +16399,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
         };
         const pointerUp = (event) => {
           const active = this.nativePdfStates.get(container);
-          if (!["highlight", "note"].includes(active?.mode) || active.busy
-            || this.nativePdfReloadGuards?.get(leaf.view?.viewer)?.canAnnotate() === false) return;
+          if (!["highlight", "note"].includes(active?.mode) || active.busy) return;
           void this.handleNativePdfPointerUp(event, leaf, container, active);
         };
         const contextMenu = (event) => {
@@ -21802,13 +21529,7 @@ module.exports = class PaperLibraryPlugin extends Plugin {
       const bytes = await document.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
       if (bytes.length < 5 || String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") throw new Error("PDF 序列化失败");
       const output = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-      const reloads = this.prepareNativePdfReloads(path);
-      try {
-        await this.app.vault.modifyBinary(file, output);
-      } catch (error) {
-        reloads.forEach((guard) => guard.cancel());
-        throw error;
-      }
+      await this.app.vault.modifyBinary(file, output);
       return true;
     });
     this.pdfMutationQueues.set(path, current);
