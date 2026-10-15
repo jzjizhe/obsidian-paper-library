@@ -5287,6 +5287,13 @@ class PaperResearchWorkspaceView extends ItemView {
     this.connectingFrom = null;
     this.pdfCache = null;
     this.pdfRenderToken = 0;
+    this.pdfHost = null;
+    this.pdfObserver = null;
+    this.pdfResizeObserver = null;
+    this.pdfPageQueue = [];
+    this.pdfActiveRenders = 0;
+    this.pdfVisibilityTimer = null;
+    this.applyWorkspaceZoom = null;
     this.longPressTimer = null;
     this.excerptDrag = null;
     this.inkDrawingCleanup = null;
@@ -5328,6 +5335,8 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   async onClose() {
+    this.disposeWorkspacePdfView();
+    this.applyWorkspaceZoom = null;
     if (this.longPressTimer) window.clearTimeout(this.longPressTimer);
     if (this.zoomSaveTimer) window.clearTimeout(this.zoomSaveTimer);
     this.finishExcerptDrag(null, true);
@@ -5412,6 +5421,7 @@ class PaperResearchWorkspaceView extends ItemView {
     const previousScroll = previousViewport
       ? { left: previousViewport.scrollLeft, top: previousViewport.scrollTop }
       : null;
+    this.disposeWorkspacePdfView();
     root.empty();
     root.addClass("paperlib-research-root");
     root.toggleClass("paperlib-mobile-layout", this.plugin.isMobileApp());
@@ -5481,13 +5491,13 @@ class PaperResearchWorkspaceView extends ItemView {
     iconButton(modeGroup, "mouse-pointer-2", "选择与拖动", () => {
       this.toolMode = "select";
       this.colorPaletteOpen = false;
-      this.render();
+      this.refreshCanvasToolbar(root, paper, workspace);
     }, this.toolMode === "select" ? "is-active" : "");
     const highlightTool = iconButton(modeGroup, "highlighter", "荧光笔", () => {
       const wasActive = this.toolMode === "highlight";
       this.toolMode = "highlight";
       this.colorPaletteOpen = wasActive ? !this.colorPaletteOpen : true;
-      this.render();
+      this.refreshCanvasToolbar(root, paper, workspace);
     }, `${this.toolMode === "highlight" ? "is-active" : ""} paperlib-highlighter-tool`);
     const activeHighlightColor = CANVAS_HIGHLIGHT_COLORS.find((color) => color.id === this.highlightColor) || CANVAS_HIGHLIGHT_COLORS[0];
     highlightTool.style.setProperty("--tool-highlight-color", activeHighlightColor.value);
@@ -5495,14 +5505,14 @@ class PaperResearchWorkspaceView extends ItemView {
       const wasActive = this.toolMode === "ink";
       this.toolMode = "ink";
       this.colorPaletteOpen = wasActive ? !this.colorPaletteOpen : true;
-      this.render();
+      this.refreshCanvasToolbar(root, paper, workspace);
     }, `${this.toolMode === "ink" ? "is-active" : ""} paperlib-ink-tool`);
     const activeInkColor = CANVAS_HIGHLIGHT_COLORS.find((color) => color.id === this.inkColor) || CANVAS_HIGHLIGHT_COLORS[0];
     inkTool.style.setProperty("--tool-highlight-color", activeInkColor.value);
     iconButton(modeGroup, "scan", "圈选区域 Ask AI", () => {
       this.toolMode = "ai-region";
       this.colorPaletteOpen = false;
-      this.render();
+      this.refreshCanvasToolbar(root, paper, workspace);
     }, `${this.toolMode === "ai-region" ? "is-active" : ""} paperlib-ai-region-tool`);
     const paletteColorId = this.toolMode === "ink" ? this.inkColor : this.highlightColor;
     const palette = modeGroup.createDiv({ cls: `paperlib-highlight-palette ${this.colorPaletteOpen && ["highlight", "ink"].includes(this.toolMode) ? "is-visible" : ""}` });
@@ -5517,7 +5527,7 @@ class PaperResearchWorkspaceView extends ItemView {
         if (this.toolMode === "ink") this.inkColor = color.id;
         else this.highlightColor = color.id;
         this.colorPaletteOpen = false;
-        this.render();
+        this.refreshCanvasToolbar(root, paper, workspace);
       });
     });
 
@@ -5646,6 +5656,7 @@ class PaperResearchWorkspaceView extends ItemView {
       const rect = board.getBoundingClientRect();
       const node = workspace.nodes.find((item) => item.id === id);
       if (!node) return;
+      const zoom = this.getWorkspaceZoom(workspace);
       node.x = Math.max(24, (event.clientX - rect.left) / zoom - 140);
       node.y = Math.max(24, (event.clientY - rect.top) / zoom - 50);
       void this.plugin.persistResearchWorkspace(paper);
@@ -5671,15 +5682,17 @@ class PaperResearchWorkspaceView extends ItemView {
       viewport.scrollLeft = canvasX * appliedZoom - (pointerX - rect.left);
       viewport.scrollTop = canvasY * appliedZoom - (pointerY - rect.top);
       this.sourceLinkPreview?.update?.();
+      this.refreshCanvasToolbar(itemViewContentRoot(this), paper, workspace);
       const label = this.containerEl.querySelector(".paperlib-canvas-zoom-value");
       if (label) label.textContent = `${Math.round(appliedZoom * 100)}%`;
       if (this.zoomSaveTimer) window.clearTimeout(this.zoomSaveTimer);
       this.zoomSaveTimer = window.setTimeout(() => {
         this.zoomSaveTimer = null;
         void this.plugin.persistResearchWorkspace(paper, false);
-        this.render();
+        this.refreshWorkspacePdfResolution();
       }, 180);
     };
+    this.applyWorkspaceZoom = applyZoom;
     viewport.addEventListener("wheel", (event) => {
       if (!event.ctrlKey) return;
       event.preventDefault();
@@ -5768,6 +5781,7 @@ class PaperResearchWorkspaceView extends ItemView {
       event.preventDefault();
       const startX = event.clientX;
       const startY = event.clientY;
+      const zoom = this.getWorkspaceZoom(this.plugin.ensureResearchWorkspace(paper));
       const originX = Number(frameState.x || 0);
       const originY = Number(frameState.y || 0);
       frame.addClass("is-dragging");
@@ -5789,7 +5803,503 @@ class PaperResearchWorkspaceView extends ItemView {
     });
   }
 
+  refreshCanvasToolbar(root, paper, workspace) {
+    if (!root) return;
+    root.toggleClass("is-highlight-mode", this.toolMode === "highlight");
+    root.toggleClass("is-ink-mode", this.toolMode === "ink");
+    root.toggleClass("is-ai-region-mode", this.toolMode === "ai-region");
+    const color = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === this.highlightColor) || CANVAS_HIGHLIGHT_COLORS[0];
+    root.style.setProperty("--paperlib-active-highlight", color.value);
+    root.style.setProperty("--paperlib-highlighter-cursor", highlighterCursor(color.value));
+    root.querySelector(".paperlib-canvas-toolbar")?.remove();
+    this.renderCanvasToolbar(root, paper, workspace);
+    this.pdfHost?.querySelectorAll?.("a.paperlib-pdf-link").forEach((anchor) => { anchor.tabIndex = this.toolMode === "select" ? 0 : -1; });
+  }
+
+  disposeWorkspacePdfView() {
+    this.pdfRenderToken += 1;
+    this.pdfObserver?.disconnect();
+    this.pdfResizeObserver?.disconnect();
+    this.pdfObserver = this.pdfResizeObserver = null;
+    this.pdfVisibilityCleanup?.();
+    this.pdfVisibilityCleanup = null;
+    this.pdfHighlightGestureCleanup?.();
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
+    if (this.pdfVisibilityTimer) clearTimeout(this.pdfVisibilityTimer);
+    this.pdfVisibilityTimer = null;
+    for (const job of this.pdfPageQueue || []) job.resolve(null);
+    this.pdfPageQueue = [];
+    this.pdfActiveRenders = 0;
+    for (const data of this.pdfCache?.pages?.values?.() || []) {
+      data.renderTask?.cancel?.();
+      data.textLayerTask?.cancel?.();
+      data.canvas.width = data.canvas.height = 0;
+    }
+    this.pdfCache?.pages?.clear?.();
+    this.pdfCache?.pageViews?.clear?.();
+    this.pdfHost = null;
+  }
+
+  workspacePdfRenderRatio(viewport) {
+    const window = this.pdfHost?.ownerDocument?.defaultView || globalThis.window;
+    const workspace = this.pdfWorkspace || {};
+    const desired = Math.max(1, (window?.devicePixelRatio || 1) * this.getWorkspaceZoom(workspace));
+    const pixels = this.plugin.isMobileApp() ? 6 * 1024 * 1024 : 12 * 1024 * 1024;
+    return Math.min(desired, Math.sqrt(pixels / (viewport.width * viewport.height)),
+      8192 / viewport.width, 8192 / viewport.height);
+  }
+
+  createWorkspacePdfPlaceholder(parent, pageNumber, size) {
+    const page = parent.createEl("article", { cls: "paperlib-selectable-pdf-page paperlib-pdf-page-placeholder" });
+    page.dataset.page = String(pageNumber);
+    page.style.width = `${size.width}px`;
+    page.style.height = `${size.height}px`;
+    page.createSpan({ cls: "paperlib-pdf-page-number", text: String(pageNumber) });
+    return page;
+  }
+
+  workspacePdfPageIsSelected(element) {
+    if (this.excerptDrag || this.inkDrawingCleanup || this.aiRegionCleanup || this.pdfHighlightGestureCleanup) return true;
+    const selection = element.ownerDocument?.defaultView?.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+    try { return selection.getRangeAt(0).intersectsNode(element); } catch (_) { return false; }
+  }
+
+  updateWorkspacePdfVisibility() {
+    const cache = this.pdfCache;
+    const host = this.pdfHost;
+    if (!host?.isConnected || !cache?.pageViews) return;
+    const bounds = host.getBoundingClientRect?.();
+    const margin = bounds ? Math.max(120, bounds.height * 0.5) : 0;
+    for (const record of cache.pageViews.values()) {
+      const rect = record.element.getBoundingClientRect?.();
+      const near = rect && bounds ? rect.bottom >= bounds.top - margin && rect.top <= bounds.bottom + margin
+        : record.pageNumber <= 2;
+      record.near = Boolean(near);
+      if (near) void this.ensureWorkspacePdfPage(record.pageNumber);
+      else if (record.pageData && !record.promise && !record.pinned && !this.workspacePdfPageIsSelected(record.element)) {
+        const old = record.element;
+        const placeholder = this.createWorkspacePdfPlaceholder(old.parentElement || old.parentNode, record.pageNumber, record.pageData.viewport);
+        old.replaceWith(placeholder);
+        this.pdfObserver?.unobserve(old);
+        this.pdfObserver?.observe(placeholder);
+        record.pageData.renderTask?.cancel?.();
+        record.pageData.textLayerTask?.cancel?.();
+        record.pageData.canvas.width = record.pageData.canvas.height = 0;
+        record.pageData.page.cleanup?.();
+        cache.pages.delete(record.pageNumber);
+        record.pageData = null;
+        record.element = placeholder;
+      }
+    }
+    this.updateWorkspacePdfProgress();
+  }
+
+  scheduleWorkspacePdfVisibility() {
+    if (this.pdfVisibilityTimer) clearTimeout(this.pdfVisibilityTimer);
+    this.pdfVisibilityTimer = setTimeout(() => {
+      this.pdfVisibilityTimer = null;
+      this.updateWorkspacePdfVisibility();
+    }, 60);
+  }
+
+  updateWorkspacePdfProgress() {
+    this.pdfPageStatus?.setText(`${this.pdfCache?.document?.numPages || 0} 页 · 按需载入 · 当前 ${this.pdfCache?.pages?.size || 0} 页`);
+  }
+
+  ensureWorkspacePdfPage(pageNumber) {
+    const cache = this.pdfCache;
+    const record = cache?.pageViews?.get(pageNumber);
+    if (!record || record.failed || !this.pdfHost?.isConnected) return Promise.resolve(null);
+    if (record.promise) return record.promise;
+    const data = record.pageData;
+    if (data && this.workspacePdfPageIsSelected(record.element)) return Promise.resolve(data);
+    const ratio = data && this.workspacePdfRenderRatio(data.viewport);
+    if (data && ratio <= data.ratio + 0.1 && ratio >= data.ratio * 0.65) return Promise.resolve(data);
+    const token = this.pdfRenderToken;
+    record.promise = new Promise((resolve) => {
+      this.pdfPageQueue.push({ record, token, cache, resolve });
+    });
+    this.pumpWorkspacePdfPages();
+    return record.promise;
+  }
+
+  pumpWorkspacePdfPages() {
+    const maximum = this.plugin.isMobileApp() ? 1 : 2;
+    while (this.pdfActiveRenders < maximum && this.pdfPageQueue.length) {
+      const job = this.pdfPageQueue.shift();
+      if (job.token !== this.pdfRenderToken || job.cache !== this.pdfCache) { job.resolve(null); continue; }
+      if (!job.record.near && !job.record.pinned) {
+        job.record.promise = null;
+        job.resolve(null);
+        continue;
+      }
+      this.pdfActiveRenders += 1;
+      void this.renderSelectablePdfPage(this.pdfPagesHost, this.pdfPaper, this.pdfWorkspace, job.record.pageNumber, job.token)
+        .then(() => job.resolve(job.record.pageData))
+        .catch((error) => {
+          if (job.token === this.pdfRenderToken && job.record.element.isConnected) {
+            console.error("Paper Library: failed to render PDF page", error);
+            const data = job.cache.pages.get(job.record.pageNumber);
+            job.record.failed = true;
+            if (!job.record.pageData) {
+              data?.textLayerTask?.cancel?.();
+              if (data?.canvas) data.canvas.width = data.canvas.height = 0;
+              job.cache.pages.delete(job.record.pageNumber);
+            }
+            const message = job.record.element.createDiv({ cls: "paperlib-pdf-page-error" });
+            message.createSpan({ text: `第 ${job.record.pageNumber} 页加载失败：${error.message || error}` });
+            const retry = message.createEl("button", { text: "重试" });
+            retry.addEventListener("click", () => {
+              message.remove();
+              job.record.failed = false;
+              void this.ensureWorkspacePdfPage(job.record.pageNumber);
+            });
+          }
+          job.resolve(null);
+        }).finally(() => {
+          job.record.promise = null;
+          if (job.token === this.pdfRenderToken && job.cache === this.pdfCache) {
+            this.pdfActiveRenders -= 1;
+            this.updateWorkspacePdfProgress();
+            this.pumpWorkspacePdfPages();
+            this.scheduleWorkspacePdfVisibility();
+            if (job.record.near && job.record.pageData) void this.ensureWorkspacePdfPage(job.record.pageNumber);
+          }
+        });
+    }
+  }
+
+  refreshWorkspacePdfResolution() {
+    this.updateWorkspacePdfVisibility();
+    for (const record of this.pdfCache?.pageViews?.values?.() || []) {
+      if (record.near && !this.workspacePdfPageIsSelected(record.element)) void this.ensureWorkspacePdfPage(record.pageNumber);
+    }
+  }
+
+  async renderWorkspacePdfBitmap(data, token) {
+    if (token !== this.pdfRenderToken) return null;
+    const owner = this.pdfHost?.ownerDocument || globalThis.document;
+    const ratio = this.workspacePdfRenderRatio(data.viewport);
+    const canvas = owner.createElement("canvas");
+    canvas.width = Math.ceil(data.viewport.width * ratio);
+    canvas.height = Math.ceil(data.viewport.height * ratio);
+    canvas.style.width = `${data.viewport.width}px`;
+    canvas.style.height = `${data.viewport.height}px`;
+    const task = data.page.render({ canvasContext: canvas.getContext("2d"), viewport: data.viewport,
+      transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
+    data.renderTask = task;
+    try { await task.promise; } finally { if (data.renderTask === task) data.renderTask = null; }
+    if (token !== this.pdfRenderToken) { canvas.width = canvas.height = 0; return null; }
+    data.ratio = ratio;
+    return canvas;
+  }
+
+  async renderWorkspacePdfText(textLayer, data, cache) {
+    textLayer.__paperlibViewport = data.viewport;
+    textLayer.style.setProperty?.("--scale-factor", String(data.viewport.scale));
+    textLayer.style.setProperty?.("--user-unit", String(data.viewport.userUnit || 1));
+    textLayer.style.setProperty?.("--total-scale-factor", String(data.viewport.scale * (data.viewport.userUnit || 1)));
+    textLayer.style.setProperty?.("--scale-round-x", "1px");
+    textLayer.style.setProperty?.("--scale-round-y", "1px");
+    if (typeof cache.pdfjs.TextLayer === "function") {
+      const task = new cache.pdfjs.TextLayer({ textContentSource: data.textContent, container: textLayer, viewport: data.viewport });
+      data.textLayerTask = task;
+      await task.render();
+      let index = 0;
+      data.textContent.items.forEach((item, originalIndex) => {
+        if (item.str === undefined) return;
+        const span = task.textDivs[index++];
+        if (!span) return;
+        span.classList.add("paperlib-pdf-text-item");
+        span.dataset.textIndex = String(originalIndex);
+      });
+      return;
+    }
+    // Older PDF.js builds may not expose TextLayer.
+    const measure = (textLayer.ownerDocument || globalThis.document).createElement("canvas").getContext("2d");
+    data.textContent.items.forEach((item, index) => {
+      if (!item?.str) return;
+      const transform = cache.pdfjs.Util.transform(data.viewport.transform, item.transform);
+      const fontHeight = Math.max(1, Math.hypot(transform[2], transform[3]));
+      const fontFamily = data.textContent.styles?.[item.fontName]?.fontFamily || "sans-serif";
+      const span = textLayer.createSpan({ cls: "paperlib-pdf-text-item", text: item.str });
+      span.dataset.textIndex = String(index);
+      span.style.left = `${transform[4]}px`;
+      span.style.top = `${transform[5] - fontHeight}px`;
+      span.style.fontSize = `${fontHeight}px`;
+      span.style.fontFamily = fontFamily;
+      measure.font = `${fontHeight}px ${fontFamily}`;
+      span.style.transform = `rotate(${Math.atan2(transform[1], transform[0])}rad) scaleX(${Math.max(1, item.width * data.viewport.scale) / (measure.measureText(item.str).width || 1)})`;
+    });
+  }
+
+  beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber) {
+    if (event.button !== 0) return;
+    this.pdfHighlightGestureCleanup?.();
+    const window = textLayer.ownerDocument.defaultView;
+    const cleanup = () => {
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", cleanup, true);
+      window.removeEventListener("blur", cleanup, true);
+      if (this.pdfHighlightGestureCleanup === cleanup) this.pdfHighlightGestureCleanup = null;
+    };
+    const up = (end) => {
+      if (event.pointerId !== undefined && end.pointerId !== event.pointerId) return;
+      cleanup();
+      if (textLayer.isConnected) this.handlePdfHighlight(end, textLayer, paper, pageNumber);
+    };
+    this.pdfHighlightGestureCleanup = cleanup;
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", cleanup, true);
+    window.addEventListener("blur", cleanup, true);
+  }
+
+  repairWorkspacePdfSelectionEnd(textLayer, event) {
+    const doc = textLayer.ownerDocument;
+    const selection = doc.defaultView.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed
+      || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
+    const mappedSpan = (node) => {
+      const span = (node?.nodeType === 3 ? node.parentElement : node)?.closest?.(".paperlib-pdf-text-item");
+      return span && textLayer.contains(span) ? span : null;
+    };
+    if (!mappedSpan(selection.anchorNode) || mappedSpan(selection.focusNode)) return;
+    // Chrome can move the selection endpoint to an unrelated element at page edges.
+    const vertical = (textLayer.__paperlibViewport?.rotation || 0) % 180 !== 0;
+    let closest;
+    for (const span of this.getCanvasSelectionItemSpans(textLayer)) {
+      const rect = span.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
+      const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
+      const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
+      const lineDistance = vertical ? dx : dy;
+      const distance = vertical ? dy : dx;
+      if (!closest || lineDistance < closest.lineDistance
+        || (lineDistance === closest.lineDistance && distance < closest.distance)) {
+        closest = { span, rect, lineDistance, distance };
+      }
+    }
+    if (!closest) return;
+    const { span, rect } = closest;
+    const x = Math.max(rect.left + 0.1, Math.min(rect.right - 0.1, event.clientX));
+    const y = Math.max(rect.top + 0.1, Math.min(rect.bottom - 0.1, event.clientY));
+    const caret = doc.caretPositionFromPoint?.(x, y);
+    const range = caret ? null : doc.caretRangeFromPoint?.(x, y);
+    let node = caret?.offsetNode || range?.startContainer;
+    let offset = caret?.offset ?? range?.startOffset;
+    if (mappedSpan(node) !== span) {
+      const slices = this.getCanvasSelectionTextSlices(span);
+      if (!slices.length) return;
+      const rtl = doc.defaultView.getComputedStyle(span).direction === "rtl";
+      const end = vertical ? event.clientY >= (rect.top + rect.bottom) / 2
+        : (event.clientX >= (rect.left + rect.right) / 2) !== rtl;
+      node = (end ? slices[slices.length - 1] : slices[0]).node;
+      offset = end ? node.data.length : 0;
+    }
+    selection.setBaseAndExtent(selection.anchorNode, selection.anchorOffset, node, offset);
+  }
+
+  isWorkspacePdfLinkCurrent(context) {
+    return this.pdfCache === context.cache && context.cache?.document === context.document
+      && this.pdfHost === context.host && context.host?.isConnected
+      && this.pdfRenderToken === context.token && this.paperId === context.paperId;
+  }
+
+  workspacePdfLinkUrl(value) {
+    if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) return null;
+    try {
+      const url = new URL(value.trim());
+      return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  installWorkspacePdfLinkEvents(host = this.pdfHost) {
+    if (!host) return;
+    this.workspacePdfLinkHosts ||= new WeakSet();
+    if (this.workspacePdfLinkHosts.has(host)) return;
+    this.workspacePdfLinkHosts.add(host);
+    const handle = (event) => {
+      const anchor = event.target?.closest?.("a.paperlib-pdf-link");
+      const link = anchor?.__paperlibPdfLink;
+      if (!link || !host.contains(anchor)) return;
+      if (this.toolMode !== "select") { event.preventDefault(); return; }
+      // Capture at the host before page-level figure, excerpt, and ink handlers.
+      event.stopPropagation();
+      if (event.type === "dragstart") event.preventDefault();
+      if (event.type === "contextmenu" && !link.url) event.preventDefault();
+      const activate = (event.type === "click" && event.button === 0)
+        || (event.type === "auxclick" && event.button === 1);
+      if (!activate) return;
+      event.preventDefault();
+      if (!this.isWorkspacePdfLinkCurrent(link.context)) return;
+      if (link.url) {
+        host.ownerDocument.defaultView?.open(link.url, "_blank", "noopener,noreferrer");
+      } else {
+        void this.followWorkspacePdfLink(link);
+      }
+    };
+    for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click",
+      "auxclick", "dblclick", "dragstart", "contextmenu", "keydown", "keyup"]) {
+      host.addEventListener(type, handle, true);
+    }
+  }
+
+  async renderWorkspacePdfLinks(page, pageData, pageWrap, cache = this.pdfCache) {
+    const host = this.pdfHost;
+    const layer = pageWrap.querySelector(".paperlib-pdf-link-layer");
+    if (!layer || !cache?.document || !host) return;
+    const context = { cache, document: cache.document, host,
+      token: this.pdfRenderToken, paperId: this.paperId };
+    const task = Symbol();
+    const viewport = pageData.viewport;
+    layer.__paperlibPdfLinkTask = task;
+    const current = () => this.isWorkspacePdfLinkCurrent(context)
+      && host.contains(pageWrap) && pageData.viewport === viewport
+      && layer.__paperlibPdfLinkTask === task;
+    if (!current()) return;
+    this.installWorkspacePdfLinkEvents(host);
+    try {
+      const annotations = await page.getAnnotations({ intent: "display" });
+      if (!current()) return;
+      const fragment = pageWrap.ownerDocument.createDocumentFragment();
+      for (const annotation of annotations) {
+        if (annotation.subtype !== "Link" || annotation.noView) continue;
+        const rect = annotation.rect;
+        if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) continue;
+        const rawUrl = annotation.url || annotation.unsafeUrl;
+        const url = this.workspacePdfLinkUrl(rawUrl);
+        const destination = annotation.dest;
+        const action = ["NextPage", "PrevPage", "FirstPage", "LastPage"].includes(annotation.action)
+          ? annotation.action : null;
+        if (rawUrl && !url) continue;
+        if (!url && !(typeof destination === "string" || Array.isArray(destination)) && !action) continue;
+        const box = viewport.convertToViewportRectangle(rect);
+        const left = Math.max(0, Math.min(box[0], box[2]));
+        const top = Math.max(0, Math.min(box[1], box[3]));
+        const right = Math.min(viewport.width, Math.max(box[0], box[2]));
+        const bottom = Math.min(viewport.height, Math.max(box[1], box[3]));
+        if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top) continue;
+        const anchor = pageWrap.ownerDocument.createElement("a");
+        anchor.className = "paperlib-pdf-link";
+        anchor.href = url || "#";
+        anchor.draggable = false;
+        anchor.tabIndex = this.toolMode === "select" ? 0 : -1;
+        const label = annotation.titleObj?.str || annotation.contentsObj?.str
+          || url || (typeof destination === "string" ? `Go to ${destination}` : action || "Go to PDF destination");
+        anchor.setAttribute("aria-label", String(label));
+        anchor.title = String(label);
+        if (url) {
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+        }
+        Object.assign(anchor.style, { position: "absolute", left: `${left}px`, top: `${top}px`,
+          width: `${right - left}px`, height: `${bottom - top}px` });
+        anchor.__paperlibPdfLink = { url, destination, action,
+          pageNumber: Number(pageWrap.dataset.page), context };
+        fragment.appendChild(anchor);
+      }
+      if (current()) layer.replaceChildren(fragment);
+    } catch (error) {
+      if (current()) console.error("Paper Library: failed to load PDF links", error);
+    }
+  }
+
+  async followWorkspacePdfLink(link) {
+    const { context } = link;
+    const { document: pdf, cache, host } = context;
+    if (!this.isWorkspacePdfLinkCurrent(context)) return false;
+    const task = Symbol();
+    this.workspacePdfLinkNavigation = task;
+    const current = () => this.isWorkspacePdfLinkCurrent(context)
+      && this.workspacePdfLinkNavigation === task;
+    let pinned;
+    try {
+      let destination = link.destination;
+      let pageNumber;
+      if (typeof destination === "string") {
+        destination = await pdf.getDestination(destination);
+        if (!current()) return false;
+      }
+      if (Array.isArray(destination)) {
+        const ref = destination[0];
+        if (Number.isInteger(ref)) pageNumber = ref + 1;
+        else if (ref && Number.isInteger(ref.num) && Number.isInteger(ref.gen)) {
+          pageNumber = (await pdf.getPageIndex(ref)) + 1;
+          if (!current()) return false;
+        } else return false;
+      } else if (link.action) {
+        const source = link.pageNumber;
+        pageNumber = { NextPage: source + 1, PrevPage: source - 1,
+          FirstPage: 1, LastPage: pdf.numPages }[link.action];
+        pageNumber = Math.max(1, Math.min(pdf.numPages, pageNumber));
+      } else return false;
+      if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pdf.numPages) return false;
+      if (!current()) return false;
+      pinned = cache.pageViews.get(pageNumber);
+      if (!pinned) return false;
+      pinned.pinned = (pinned.pinned || 0) + 1;
+      await this.ensureWorkspacePdfPage(pageNumber);
+      if (!current()) return false;
+      if (!pinned.element || !pinned.pageData?.viewport || !host.contains(pinned.element)) return false;
+      return this.scrollWorkspacePdfDestination(host, pinned, destination);
+    } catch (error) {
+      if (current()) console.error("Paper Library: failed to follow PDF link", error);
+      return false;
+    } finally {
+      if (pinned) pinned.pinned -= 1;
+      if (current()) this.scheduleWorkspacePdfVisibility();
+    }
+  }
+
+  scrollWorkspacePdfDestination(host, view, destination) {
+    const viewport = view.pageData.viewport;
+    const pageRect = view.element.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    // Bounding rectangles include the board's CSS zoom; scroll offsets do not.
+    const hostScaleX = hostRect.width / host.offsetWidth;
+    const hostScaleY = hostRect.height / host.offsetHeight;
+    const scaleX = pageRect.width / viewport.width / hostScaleX;
+    const scaleY = pageRect.height / viewport.height / hostScaleY;
+    if (![hostScaleX, hostScaleY, scaleX, scaleY].every((value) => Number.isFinite(value) && value > 0)) return false;
+    const left = host.scrollLeft + (pageRect.left - hostRect.left) / hostScaleX - host.clientLeft;
+    const top = host.scrollTop + (pageRect.top - hostRect.top) / hostScaleY - host.clientTop;
+    const inset = host.querySelector(".paperlib-canvas-pdf-meta")?.offsetHeight || 0;
+    const visible = [Math.max(0, Math.min(viewport.width, (host.scrollLeft - left) / scaleX)),
+      Math.max(0, Math.min(viewport.height, (host.scrollTop + inset - top) / scaleY))];
+    const retained = viewport.convertToPdfPoint(...visible);
+    const [xMin, yMin, xMax, yMax] = viewport.viewBox;
+    const kind = destination?.[1]?.name;
+    const number = (index, fallback) => Number.isFinite(destination?.[index]) ? destination[index] : fallback;
+    let point = [0, 0];
+    if (kind === "XYZ") {
+      point = viewport.convertToViewportPoint(number(2, retained[0]), number(3, retained[1]));
+    } else if (["FitH", "FitBH", "FitV", "FitBV", "FitR"].includes(kind)) {
+      let rect;
+      if (kind === "FitH" || kind === "FitBH") {
+        const y = number(2, retained[1]);
+        rect = [xMin, y, xMax, y];
+      } else if (kind === "FitV" || kind === "FitBV") {
+        const x = number(2, retained[0]);
+        rect = [x, yMin, x, yMax];
+      } else {
+        rect = [number(2, xMin), number(3, yMin), number(4, xMax), number(5, yMax)];
+      }
+      const box = viewport.convertToViewportRectangle(rect);
+      point = [Math.min(box[0], box[2]), Math.min(box[1], box[3])];
+    }
+    // Fit/FitB align the page; destination zoom never changes persisted board zoom.
+    if (!point.every(Number.isFinite)) return false;
+    host.scrollLeft = Math.max(0, left + Math.max(0, point[0]) * scaleX);
+    host.scrollTop = Math.max(0, top + Math.max(0, point[1]) * scaleY - inset);
+    return true;
+  }
+
   async renderPdfDocument(host, paper, workspace) {
+    this.disposeWorkspacePdfView();
     const token = ++this.pdfRenderToken;
     const pdfPath = normalizePath(paper.pdfPath || "");
     const loading = host.createDiv({ cls: "paperlib-pdf-loading" });
@@ -5802,68 +6312,84 @@ class PaperResearchWorkspaceView extends ItemView {
         try { await this.pdfCache?.document?.destroy?.(); } catch (_) {}
         const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.plugin.readPdfBinary(file)]);
         const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-        this.pdfCache = { path: pdfPath, pdfjs, document, pages: new Map() };
+        if (token !== this.pdfRenderToken) { await document.destroy?.(); return; }
+        this.pdfCache = { path: pdfPath, pdfjs, document, pages: new Map(), pageViews: new Map(), pageSizes: new Map() };
       }
       if (token !== this.pdfRenderToken || !host.isConnected) return;
+      const cache = this.pdfCache;
+      cache.pageViews ||= new Map();
+      cache.pageSizes ||= new Map();
+      const firstPage = await cache.document.getPage(1);
+      const base = firstPage.getViewport({ scale: 1 });
+      const mobile = this.plugin.isMobileApp();
+      const scale = Math.min(mobile ? 1.15 : 1.35, (mobile ? 520 : 660) / Math.max(1, base.width));
+      const estimate = firstPage.getViewport({ scale });
+      if (token !== this.pdfRenderToken || !host.isConnected) return;
       loading.remove();
-      const document = this.pdfCache.document;
-      const count = document.numPages || 0;
+      this.pdfHost = host;
+      this.pdfPaper = paper;
+      this.pdfWorkspace = workspace;
+      const count = cache.document.numPages || 0;
       const meta = host.createDiv({ cls: "paperlib-canvas-pdf-meta" });
       const progress = meta.createDiv({ cls: "paperlib-canvas-pdf-progress" });
-      const pageStatus = progress.createSpan({ text: `${count} 页 · 正在载入全部页面` });
-      const figureRecognitionAvailable = this.plugin.settings.enableFigureRecognition
-        && !this.plugin.isMobileApp();
+      this.pdfPageStatus = progress.createSpan({ text: `${count} 页 · 按需载入` });
+      const figureRecognitionAvailable = this.plugin.settings.enableFigureRecognition && !mobile;
       const recognizedFigureCacheAvailable = Boolean(this.plugin.getPortablePdfFigurePayload(pdfPath));
-      const figureDragAvailable = figureRecognitionAvailable || recognizedFigureCacheAvailable;
-      const figureStatus = progress.createSpan({
-        cls: "paperlib-pdf-figure-status",
-        text: this.plugin.isMobileApp()
-          ? "图片识别：移动端仅查看已识别结果"
-          : figureRecognitionAvailable ? "图片识别：等待页面载入"
-            : recognizedFigureCacheAvailable ? "图片识别：使用已有结果" : "图片识别：未开启"
-      });
-      meta.createSpan({ text: this.toolMode === "highlight" ? "荧光笔：划取文字即可高亮" : "选择 → 长按 → 拖出" });
+      const figureStatus = progress.createSpan({ cls: "paperlib-pdf-figure-status",
+        text: mobile ? "图片识别：移动端仅查看已识别结果"
+          : figureRecognitionAvailable ? "图片识别：准备中"
+            : recognizedFigureCacheAvailable ? "图片识别：使用已有结果" : "图片识别：未开启" });
       const pages = host.createDiv({ cls: "paperlib-canvas-pdf-pages" });
+      this.pdfPagesHost = pages;
       for (let pageNumber = 1; pageNumber <= count; pageNumber += 1) {
-        if (token !== this.pdfRenderToken || !pages.isConnected) return;
-        await this.renderSelectablePdfPage(pages, paper, workspace, pageNumber, token);
-        pageStatus.setText(`${count} 页 · 已载入 ${pageNumber}/${count}`);
+        const size = cache.pageSizes.get(pageNumber) || estimate;
+        const element = this.createWorkspacePdfPlaceholder(pages, pageNumber, size);
+        cache.pageViews.set(pageNumber, { pageNumber, element, pageData: null, promise: null, near: false });
       }
-      pageStatus.setText(`${count} 页 · 已全部载入`);
-      if (figureDragAvailable) {
+      const saved = this.pdfScrollByPath.get(pdfPath);
+      if (saved) { host.scrollTop = saved.top; host.scrollLeft = saved.left; }
+      const window = host.ownerDocument?.defaultView || globalThis.window;
+      if (typeof window?.IntersectionObserver === "function") {
+        this.pdfObserver = new window.IntersectionObserver(() => this.scheduleWorkspacePdfVisibility(),
+          { root: host, rootMargin: "250px 0px" });
+        for (const record of cache.pageViews.values()) this.pdfObserver.observe(record.element);
+      }
+      if (typeof window?.ResizeObserver === "function") {
+        this.pdfResizeObserver = new window.ResizeObserver(() => this.scheduleWorkspacePdfVisibility());
+        this.pdfResizeObserver.observe(host);
+      }
+      const schedule = () => this.scheduleWorkspacePdfVisibility();
+      host.addEventListener("scroll", schedule, { passive: true });
+      host.ownerDocument?.addEventListener?.("selectionchange", schedule);
+      window?.addEventListener?.("resize", schedule, { passive: true });
+      this.pdfVisibilityCleanup = () => {
+        host.removeEventListener?.("scroll", schedule);
+        host.ownerDocument?.removeEventListener?.("selectionchange", schedule);
+        window?.removeEventListener?.("resize", schedule);
+      };
+      this.updateWorkspacePdfVisibility();
+      const initial = [...cache.pageViews.values()].filter((record) => record.near).map((record) => this.ensureWorkspacePdfPage(record.pageNumber));
+      await Promise.all(initial);
+      if (token !== this.pdfRenderToken || !host.isConnected) return;
+      if (figureRecognitionAvailable || recognizedFigureCacheAvailable) {
         void this.plugin.getPdfFigureCatalog(pdfPath, (state) => {
           if (token !== this.pdfRenderToken || !figureStatus.isConnected) return;
-          if (state.stage === "model") {
-            figureStatus.setText("图片识别：正在准备模型");
-          } else if (state.stage === "page") {
-            figureStatus.setText(`图片识别：${state.current}/${state.total} 页 · ${state.figures} 张`);
-          } else if (state.stage === "complete") {
-            figureStatus.setText(`图片识别：已完成 · ${state.figures} 张`);
-          } else if (state.stage === "error") {
-            figureStatus.setText("图片识别：失败");
-            figureStatus.setAttribute("title", state.message || "图片识别失败");
-          }
+          if (state.stage === "model") figureStatus.setText("图片识别：正在准备模型");
+          else if (state.stage === "page") figureStatus.setText(`图片识别：${state.current}/${state.total} 页 · ${state.figures} 张`);
+          else if (state.stage === "complete") figureStatus.setText(`图片识别：已完成 · ${state.figures} 张`);
         }).then((catalog) => {
-          if (token !== this.pdfRenderToken || !pages.isConnected) return;
-          this.plugin.installPdfFigureDragZones(pages, pdfPath, paper, catalog);
+          if (token === this.pdfRenderToken && pages.isConnected) this.plugin.installPdfFigureDragZones(pages, pdfPath, paper, catalog);
         }).catch((error) => {
-          if (token !== this.pdfRenderToken || !figureStatus.isConnected) return;
-          figureStatus.setText("图片识别：失败");
-          figureStatus.setAttribute("title", error.message || String(error));
-        });
-      }
-      const savedScroll = this.pdfScrollByPath.get(pdfPath);
-      if (savedScroll) {
-        window.requestAnimationFrame(() => {
-          if (!host.isConnected) return;
-          host.scrollTop = savedScroll.top;
-          host.scrollLeft = savedScroll.left;
+          if (token === this.pdfRenderToken && figureStatus.isConnected) {
+            figureStatus.setText("图片识别：失败"); figureStatus.setAttribute("title", error.message || String(error));
+          }
         });
       }
     } catch (error) {
       if (token !== this.pdfRenderToken) return;
       console.error("Paper Library: failed to render PDF in research canvas", error);
       loading.empty();
+      if (!loading.isConnected) host.appendChild(loading);
       setPaperlibIcon(loading.createSpan(), "file-warning");
       loading.createSpan({ text: `PDF 加载失败：${error.message || error}` });
     }
@@ -5871,36 +6397,40 @@ class PaperResearchWorkspaceView extends ItemView {
 
   async renderSelectablePdfPage(parent, paper, workspace, pageNumber, token) {
     const cache = this.pdfCache;
+    const record = cache.pageViews.get(pageNumber);
+    const current = () => token === this.pdfRenderToken && cache === this.pdfCache
+      && cache.pageViews.get(pageNumber) === record && parent.isConnected;
+    if (!record || !current()) return;
     let pageData = cache.pages.get(pageNumber);
+    if (pageData && record.pageData) {
+      const canvas = await this.renderWorkspacePdfBitmap(pageData, token);
+      if (!canvas || token !== this.pdfRenderToken || !record.element.isConnected) return;
+      const previous = pageData.canvas;
+      previous.replaceWith(canvas);
+      pageData.canvas = canvas;
+      previous.width = previous.height = 0;
+      pageData.textLayerTask?.update?.({ viewport: pageData.viewport });
+      return;
+    }
     if (!pageData) {
       const page = await cache.document.getPage(pageNumber);
+      if (!current()) return;
       const base = page.getViewport({ scale: 1 });
       const mobile = this.plugin.isMobileApp();
-      const targetWidth = mobile ? 520 : 660;
-      const scale = Math.min(mobile ? 1.15 : 1.35, targetWidth / Math.max(1, base.width));
+      const scale = Math.min(mobile ? 1.15 : 1.35, (mobile ? 520 : 660) / Math.max(1, base.width));
       const viewport = page.getViewport({ scale });
-      const canvas = document.createElement("canvas");
-      // A 1x backing canvas is visibly blurred on Retina phones. 1.5x keeps
-      // text/figures crisp while still bounding the cost of loading all pages.
-      const ratio = mobile
-        ? Math.max(1.35, Math.min(1.5, window.devicePixelRatio || 1))
-        : Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      canvas.width = Math.floor(viewport.width * ratio);
-      canvas.height = Math.floor(viewport.height * ratio);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      const context = canvas.getContext("2d");
-      await page.render({
-        canvasContext: context,
-        viewport,
-        transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0]
-      }).promise;
       const textContent = await page.getTextContent();
-      pageData = { canvas, viewport, textContent };
+      if (!current()) return;
+      pageData = { page, viewport, textContent, canvas: (parent.ownerDocument || document).createElement("canvas"), ratio: 0 };
       cache.pages.set(pageNumber, pageData);
+      cache.pageSizes.set(pageNumber, viewport);
     }
-    if (token !== this.pdfRenderToken || !parent.isConnected) return;
-    const pageWrap = parent.createEl("article", { cls: "paperlib-selectable-pdf-page" });
+    const bitmap = await this.renderWorkspacePdfBitmap(pageData, token);
+    if (!bitmap) return;
+    pageData.canvas = bitmap;
+    if (!current()) return;
+    const pageWrap = (parent.ownerDocument || document).createElement("article");
+    pageWrap.className = "paperlib-selectable-pdf-page";
     pageWrap.style.width = `${pageData.viewport.width}px`;
     pageWrap.style.height = `${pageData.viewport.height}px`;
     pageWrap.dataset.page = String(pageNumber);
@@ -5913,29 +6443,16 @@ class PaperResearchWorkspaceView extends ItemView {
       this.plugin.getPdfInkStrokes(paper, paper.pdfPath, pageNumber)
     );
     pageWrap.createSpan({ cls: "paperlib-pdf-page-number", text: String(pageNumber) });
-    const textLayer = pageWrap.createDiv({ cls: "paperlib-pdf-text-layer" });
-    textLayer.style.width = `${pageData.viewport.width}px`;
-    textLayer.style.height = `${pageData.viewport.height}px`;
-    textLayer.__paperlibViewport = pageData.viewport;
-    const measure = document.createElement("canvas").getContext("2d");
-    pageData.textContent.items.forEach((item, index) => {
-      if (!item?.str) return;
-      const transform = cache.pdfjs.Util.transform(pageData.viewport.transform, item.transform);
-      const angle = Math.atan2(transform[1], transform[0]);
-      const fontHeight = Math.max(1, Math.hypot(transform[2], transform[3]));
-      const fontFamily = pageData.textContent.styles?.[item.fontName]?.fontFamily || "sans-serif";
-      const span = textLayer.createSpan({ cls: "paperlib-pdf-text-item", text: item.str });
-      span.dataset.textIndex = String(index);
-      span.style.left = `${transform[4]}px`;
-      span.style.top = `${transform[5] - fontHeight}px`;
-      span.style.fontSize = `${fontHeight}px`;
-      span.style.fontFamily = fontFamily;
-      measure.font = `${fontHeight}px ${fontFamily}`;
-      const measuredWidth = measure.measureText(item.str).width || 1;
-      const targetWidth = Math.max(1, Number(item.width || 0) * pageData.viewport.scale);
-      const scaleX = targetWidth / measuredWidth;
-      span.style.transform = `rotate(${angle}rad) scaleX(${scaleX})`;
-    });
+    const textLayer = pageWrap.createDiv({ cls: "paperlib-pdf-text-layer textLayer" });
+    await this.renderWorkspacePdfText(textLayer, pageData, cache);
+    if (token !== this.pdfRenderToken || !parent.isConnected) { pageWrap.remove(); return; }
+    pageWrap.createDiv({ cls: "paperlib-pdf-link-layer" });
+    const previous = record.element;
+    previous.replaceWith(pageWrap);
+    this.pdfObserver?.unobserve(previous);
+    record.element = pageWrap;
+    record.pageData = pageData;
+    this.pdfObserver?.observe(pageWrap);
     this.applyPdfMarkings(
       textLayer,
       highlightLayer,
@@ -5946,6 +6463,7 @@ class PaperResearchWorkspaceView extends ItemView {
       pageData.textContent.items
     );
     pageWrap.addEventListener("pointerdown", (event) => {
+      if (event.target?.closest?.("a.paperlib-pdf-link")) return;
       if (event.button === 2) {
         const stroke = this.plugin.findPdfInkStrokeAtEvent(
           event, pageWrap, paper, paper.pdfPath, pageNumber
@@ -6000,8 +6518,10 @@ class PaperResearchWorkspaceView extends ItemView {
         .onClick(() => this.plugin.removePdfInkStroke(paper, stroke.id)));
       menu.showAtMouseEvent(event);
     }, true);
-    textLayer.addEventListener("pointerdown", (event) => this.scheduleExcerptDrag(event, textLayer, paper, pageNumber));
-    textLayer.addEventListener("pointerup", (event) => this.handlePdfHighlight(event, textLayer, paper, pageNumber));
+    textLayer.addEventListener("pointerdown", (event) => {
+      if (this.toolMode === "highlight") this.beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber);
+      else this.scheduleExcerptDrag(event, textLayer, paper, pageNumber);
+    });
     textLayer.addEventListener("contextmenu", (event) => (
       this.showPdfHighlightMenu(event, paper, pageNumber, pageData.textContent.items)
     ));
@@ -6009,6 +6529,7 @@ class PaperResearchWorkspaceView extends ItemView {
     const figureCatalog = this.plugin.pdfFigureCatalogCache?.get?.(normalizePath(paper.pdfPath || ""));
     if (figureCatalog) this.plugin.installPdfFigureDragZones(pageWrap, paper.pdfPath, paper, figureCatalog);
     pageWrap.addEventListener("click", (event) => {
+      if (event.target?.closest?.("a.paperlib-pdf-link")) return;
       if (this.toolMode !== "select" || event.button !== 0 || event.defaultPrevented) return;
       const selection = pageWrap.ownerDocument.defaultView?.getSelection?.();
       if (selection && !selection.isCollapsed && selection.toString().trim()) return;
@@ -6022,6 +6543,7 @@ class PaperResearchWorkspaceView extends ItemView {
         (event.clientY - rect.top) / rect.height
       );
     }, true);
+    void this.renderWorkspacePdfLinks(pageData.page, pageData, pageWrap, cache);
   }
 
   createPdfInkLayer(pageWrap, strokes = []) {
@@ -6401,12 +6923,15 @@ class PaperResearchWorkspaceView extends ItemView {
 
   handlePdfHighlight(event, textLayer, paper, pageNumber) {
     if (this.toolMode !== "highlight" || event.button !== 0) return;
-    window.setTimeout(() => {
+    const owner = textLayer.ownerDocument.defaultView;
+    owner.setTimeout(() => {
+      if (!textLayer.isConnected) return;
+      this.repairWorkspacePdfSelectionEnd(textLayer, event);
       const context = this.getCanvasSelection(textLayer, event.target, paper, pageNumber, false);
       if (!context) return;
       this.paintPdfHighlight(textLayer, context, this.highlightColor);
       void this.plugin.saveCanvasHighlight(context, this.highlightColor);
-      window.getSelection?.()?.removeAllRanges?.();
+      owner.getSelection?.()?.removeAllRanges?.();
     }, 0);
   }
 
@@ -6428,93 +6953,154 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   getCanvasSelection(textLayer, target, paper, pageNumber, allowFallback = true) {
-    const selection = textLayer.ownerDocument.defaultView?.getSelection?.() || window.getSelection?.();
-    const closestSpan = (node) => {
-      const element = node?.nodeType === 3 ? node.parentElement : node;
+    if (!textLayer?.ownerDocument) return null;
+    const doc = textLayer.ownerDocument;
+    const selection = doc.defaultView?.getSelection?.() || doc.getSelection?.();
+    const spans = this.getCanvasSelectionItemSpans(textLayer);
+    const bounds = doc.createRange();
+    bounds.selectNodeContents(textLayer);
+    let domRange = selection?.rangeCount && !selection.isCollapsed
+      ? this.intersectCanvasSelectionRanges(selection.getRangeAt(0), bounds) : null;
+    let parts = domRange ? this.getCanvasSelectionParts(domRange, spans) : [];
+    if (!parts.length && allowFallback) {
+      const element = target?.nodeType === 3 ? target.parentElement : target;
       const span = element?.closest?.(".paperlib-pdf-text-item");
-      return span && textLayer.contains(span) ? span : null;
-    };
-    let anchorSpan = closestSpan(selection?.anchorNode);
-    let focusSpan = closestSpan(selection?.focusNode);
-    if (!anchorSpan || !focusSpan) {
-      if (!allowFallback) return null;
-      anchorSpan = target.closest(".paperlib-pdf-text-item");
-      focusSpan = anchorSpan;
-      const range = textLayer.ownerDocument.createRange();
-      range.selectNodeContents(anchorSpan);
+      if (!span || !spans.includes(span) || !span.textContent.trim()) return null;
+      domRange = doc.createRange();
+      domRange.selectNodeContents(span);
+      parts = this.getCanvasSelectionParts(domRange, [span]);
+      if (!parts.length) return null;
       selection?.removeAllRanges();
-      selection?.addRange(range);
+      selection?.addRange(domRange);
     }
-    if (!anchorSpan || !focusSpan) return null;
-    const anchorIndex = Number(anchorSpan.dataset.textIndex);
-    const focusIndex = Number(focusSpan.dataset.textIndex);
-    const targetSpan = target.closest(".paperlib-pdf-text-item");
-    const targetIndex = Number(targetSpan?.dataset.textIndex);
-    if (!allowFallback && (targetIndex < Math.min(anchorIndex, focusIndex) || targetIndex > Math.max(anchorIndex, focusIndex))) return null;
-    const rawAnchorOffset = Number.isFinite(selection?.anchorOffset) ? selection.anchorOffset : 0;
-    const rawFocusOffset = Number.isFinite(selection?.focusOffset) ? selection.focusOffset : focusSpan.textContent.length;
-    const forward = anchorIndex < focusIndex || (anchorIndex === focusIndex && rawAnchorOffset <= rawFocusOffset);
-    const beginSpan = forward ? anchorSpan : focusSpan;
-    const endSpan = forward ? focusSpan : anchorSpan;
-    const beginOffset = forward ? rawAnchorOffset : rawFocusOffset;
-    const endOffset = forward ? rawFocusOffset : rawAnchorOffset;
-    let text = String(selection?.toString() || "").replace(/\s+/g, " ").trim();
-    if (!text && !allowFallback) return null;
-    if (!text) text = anchorSpan.textContent.trim();
+    if (!parts.length) return null;
+    const fragment = domRange.cloneContents();
+    fragment.querySelectorAll("br").forEach((br) => br.replaceWith(doc.createTextNode(" ")));
+    const text = String(fragment.textContent || "").replace(/\s+/g, " ").trim();
     if (!text) return null;
+    const first = parts[0];
+    const last = parts[parts.length - 1];
     const selectedRange = {
-      beginIndex: Number(beginSpan.dataset.textIndex),
-      beginOffset,
-      endIndex: Number(endSpan.dataset.textIndex),
-      endOffset
+      beginIndex: first.index, beginOffset: first.beginOffset,
+      endIndex: last.index, endOffset: last.endOffset
     };
-    const selectionClientRects = this.getCanvasSelectionClientRects(textLayer, selectedRange);
-    const dragSourceRect = selectionClientRects.length ? {
-      left: Math.min(...selectionClientRects.map((rect) => rect.left)),
-      top: Math.min(...selectionClientRects.map((rect) => rect.top)),
-      right: Math.max(...selectionClientRects.map((rect) => rect.right)),
-      bottom: Math.max(...selectionClientRects.map((rect) => rect.bottom))
-    } : null;
+    const clientRects = this.getCanvasSelectionItemRects(parts.map((part) => part.span), selectedRange);
+    let dragSourceRect = null;
+    for (const rect of clientRects) {
+      if (!dragSourceRect) {
+        dragSourceRect = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      } else {
+        dragSourceRect.left = Math.min(dragSourceRect.left, rect.left);
+        dragSourceRect.top = Math.min(dragSourceRect.top, rect.top);
+        dragSourceRect.right = Math.max(dragSourceRect.right, rect.right);
+        dragSourceRect.bottom = Math.max(dragSourceRect.bottom, rect.bottom);
+      }
+    }
     if (dragSourceRect) {
       dragSourceRect.width = dragSourceRect.right - dragSourceRect.left;
       dragSourceRect.height = dragSourceRect.bottom - dragSourceRect.top;
     }
     return {
-      paper,
-      text: text.slice(0, 8000),
-      page: pageNumber,
-      range: selectedRange,
-      pdfRects: this.getCanvasPdfRects(textLayer, selectedRange, selectionClientRects),
-      pdfPath: paper.pdfPath,
-      sourceLeaf: this.leaf,
-      selectionSource: "workspace",
-      rectCoordinateSpace: "pdf",
-      dragSourceRect
+      paper, text: text.slice(0, 8000), page: pageNumber, range: selectedRange,
+      pdfRects: this.getCanvasPdfRects(textLayer, selectedRange, clientRects),
+      pdfPath: paper.pdfPath, sourceLeaf: this.leaf,
+      selectionSource: "workspace", rectCoordinateSpace: "pdf", dragSourceRect
     };
   }
 
   getCanvasSelectionClientRects(textLayer, selectionRange) {
-    if (!textLayer || !selectionRange) return [];
-    const domRects = [];
-    textLayer.querySelectorAll(".paperlib-pdf-text-item").forEach((span) => {
+    if (!textLayer?.ownerDocument || !selectionRange) return [];
+    return this.getCanvasSelectionItemRects(this.getCanvasSelectionItemSpans(textLayer), selectionRange);
+  }
+
+  getCanvasSelectionItemSpans(textLayer) {
+    return Array.from(textLayer.querySelectorAll(".paperlib-pdf-text-item[data-text-index]"))
+      .filter((span) => /^\d+$/.test(span.dataset.textIndex)
+        && Number.isSafeInteger(Number(span.dataset.textIndex)));
+  }
+
+  intersectCanvasSelectionRanges(range, bounds) {
+    if (range.startContainer.getRootNode() !== bounds.startContainer.getRootNode()) return null;
+    const clipped = range.cloneRange();
+    if (range.compareBoundaryPoints(range.START_TO_START, bounds) < 0) {
+      clipped.setStart(bounds.startContainer, bounds.startOffset);
+    }
+    if (range.compareBoundaryPoints(range.END_TO_END, bounds) > 0) {
+      clipped.setEnd(bounds.endContainer, bounds.endOffset);
+    }
+    return clipped.collapsed ? null : clipped;
+  }
+
+  getCanvasSelectionParts(range, spans) {
+    const parts = [];
+    let low = 0;
+    let high = spans.length;
+    // Mapped spans are in DOM order; skip items preceding the selection.
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      const span = spans[middle];
+      if (range.comparePoint(span, span.childNodes.length) < 0) low = middle + 1;
+      else high = middle;
+    }
+    for (let index = low; index < spans.length; index += 1) {
+      const span = spans[index];
+      if (range.comparePoint(span, 0) > 0) break;
+      const contents = span.ownerDocument.createRange();
+      contents.selectNodeContents(span);
+      const overlap = this.intersectCanvasSelectionRanges(range, contents);
+      if (!overlap) continue;
+      const length = overlap.toString().length;
+      if (!length) continue;
+      contents.setEnd(overlap.startContainer, overlap.startOffset);
+      const beginOffset = contents.toString().length;
+      parts.push({ span, index: Number(span.dataset.textIndex), beginOffset, endOffset: beginOffset + length });
+    }
+    return parts;
+  }
+
+  getCanvasSelectionTextSlices(span, start = 0, end = Infinity) {
+    start = Math.max(0, Math.trunc(Number(start) || 0));
+    end = Math.max(0, Math.trunc(Number(end) || 0));
+    if (end <= start) return [];
+    const doc = span.ownerDocument;
+    const walker = doc.createTreeWalker(span, doc.defaultView?.NodeFilter?.SHOW_TEXT ?? 4);
+    const slices = [];
+    let offset = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      const length = node.data.length;
+      const from = Math.max(0, start - offset);
+      const to = Math.min(length, end - offset);
+      if (to > from) slices.push({ node, start: from, end: to });
+      offset += length;
+      if (offset >= end) break;
+    }
+    return slices;
+  }
+
+  getCanvasSelectionItemRects(spans, selectionRange) {
+    const beginIndex = Number(selectionRange.beginIndex);
+    const endIndex = Number(selectionRange.endIndex);
+    if (!Number.isSafeInteger(beginIndex) || !Number.isSafeInteger(endIndex)
+      || beginIndex < 0 || endIndex < beginIndex) return [];
+    const rects = [];
+    for (const span of spans) {
       const index = Number(span.dataset.textIndex);
-      if (index < Number(selectionRange.beginIndex) || index > Number(selectionRange.endIndex)) return;
-      const textNode = Array.from(span.childNodes).find((node) => node.nodeType === 3);
-      if (!textNode) return;
-      const length = textNode.textContent?.length || 0;
-      const start = index === Number(selectionRange.beginIndex)
-        ? Math.max(0, Math.min(length, Number(selectionRange.beginOffset) || 0))
-        : 0;
-      const end = index === Number(selectionRange.endIndex)
-        ? Math.max(0, Math.min(length, Number(selectionRange.endOffset) || 0))
-        : length;
-      if (end <= start) return;
-      const range = textLayer.ownerDocument.createRange();
-      range.setStart(textNode, start);
-      range.setEnd(textNode, end);
-      domRects.push(...Array.from(range.getClientRects()));
-    });
-    return domRects.filter((rect) => rect.width > 0.5 && rect.height > 0.5);
+      if (index < beginIndex || index > endIndex) continue;
+      const start = index === beginIndex ? Number(selectionRange.beginOffset) || 0 : 0;
+      const end = index === endIndex ? Number(selectionRange.endOffset) || 0 : Infinity;
+      const slices = this.getCanvasSelectionTextSlices(span, start, end);
+      if (!slices.length) continue;
+      const range = span.ownerDocument.createRange();
+      for (const slice of slices) {
+        range.setStart(slice.node, slice.start);
+        range.setEnd(slice.node, slice.end);
+        for (const rect of range.getClientRects()) {
+          if (rect.width > 0.5 && rect.height > 0.5) rects.push(rect);
+        }
+      }
+    }
+    return rects;
   }
 
   getCanvasPdfRects(textLayer, selectionRange, clientRects = null) {
@@ -7045,6 +7631,7 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   startConnectionDrag(event, board, paper, node, side, zoom) {
+    zoom = this.getWorkspaceZoom(this.plugin.ensureResearchWorkspace(paper));
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -7127,6 +7714,7 @@ class PaperResearchWorkspaceView extends ItemView {
       event.preventDefault();
       const startX = event.clientX;
       const startY = event.clientY;
+      const zoom = this.getWorkspaceZoom(this.plugin.ensureResearchWorkspace(paper));
       const originX = Number(node.x || 0);
       const originY = Number(node.y || 0);
       card.addClass("is-dragging");
@@ -7170,10 +7758,13 @@ class PaperResearchWorkspaceView extends ItemView {
   }
 
   setZoom(paper, value) {
-    const workspace = this.plugin.ensureResearchWorkspace(paper);
-    this.assignWorkspaceZoom(workspace, value);
-    void this.plugin.persistResearchWorkspace(paper, false);
-    this.render();
+    if (this.applyWorkspaceZoom) this.applyWorkspaceZoom(value);
+    else {
+      const workspace = this.plugin.ensureResearchWorkspace(paper);
+      this.assignWorkspaceZoom(workspace, value);
+      void this.plugin.persistResearchWorkspace(paper, false);
+      this.render();
+    }
   }
 }
 

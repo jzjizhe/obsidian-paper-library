@@ -8859,6 +8859,7 @@ button.paperlib-file-open {
 
 .paperlib-selectable-pdf-page {
   position: relative;
+  isolation: isolate;
   flex: 0 0 auto;
   overflow: hidden;
   background: white;
@@ -8929,6 +8930,7 @@ button.paperlib-file-open {
 
 .paperlib-pdf-text-layer {
   position: absolute;
+  text-align: initial;
   z-index: 3;
   inset: 0;
   overflow: hidden;
@@ -8936,6 +8938,69 @@ button.paperlib-file-open {
   opacity: 1;
   user-select: text;
   -webkit-user-select: text;
+  transform-origin: 0 0;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  forced-color-adjust: none;
+}
+
+.paperlib-pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+.paperlib-pdf-text-layer .markedContent {
+  top: 0;
+  height: 0;
+}
+
+.paperlib-pdf-text-layer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.paperlib-pdf-text-layer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.paperlib-pdf-text-layer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.paperlib-pdf-link-layer {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  pointer-events: none;
+}
+
+.paperlib-pdf-link {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.paperlib-pdf-link:is(:hover, :focus-visible) {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.paperlib-research-root:is(.is-highlight-mode, .is-ink-mode, .is-ai-region-mode) .paperlib-pdf-link {
+  pointer-events: none;
+}
+
+.paperlib-pdf-page-error {
+  position: absolute;
+  inset: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-muted);
 }
 
 .paperlib-pdf-text-item {

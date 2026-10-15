@@ -58,7 +58,7 @@ function createPlugin(readBinary) {
       getAbstractFileByPath: (value) => value === file.path ? file : null
     }
   };
-  plugin.settings = { enableFigureRecognition: false };
+  plugin.settings = { enableFigureRecognition: false, papers: [] };
   plugin.isMobileApp = () => false;
   plugin.getPortablePdfFigurePayload = () => null;
   plugin.getPdfInkStrokes = () => [];
@@ -66,42 +66,485 @@ function createPlugin(readBinary) {
 }
 
 class Element {
-  constructor(tag, options = {}) {
+  constructor(tag, options = {}, ownerDocument = globalThis.document) {
     this.tag = tag;
-    this.cls = options.cls || "";
+    this.nodeType = tag === "#document-fragment" ? 11 : 1;
+    this.ownerDocument = ownerDocument;
+    this.className = options.cls || "";
     this.text = options.text || "";
     this.children = [];
-    this.style = {};
+    this.parentNode = null;
+    this.style = { setProperty(name, value) { this[name] = String(value); } };
     this.dataset = {};
+    this.attributes = new Map();
     this.listeners = new Map();
-    this.isConnected = true;
+    this.scrollLeft = this.scrollTop = this.clientLeft = this.clientTop = 0;
+    this.classList = {
+      contains: (name) => this.className.split(/\s+/).includes(name),
+      add: (...names) => { this.className = [...new Set([...this.className.split(/\s+/).filter(Boolean), ...names])].join(" "); },
+      remove: (...names) => { this.className = this.className.split(/\s+/).filter((name) => !names.includes(name)).join(" "); },
+      toggle: (name, force = !this.classList.contains(name)) => {
+        if (force) this.classList.add(name);
+        else this.classList.remove(name);
+        return force;
+      }
+    };
   }
-  createEl(tag, options) { return this.appendChild(new Element(tag, options)); }
+  get cls() { return this.className; }
+  get parentElement() { return this.parentNode?.nodeType === 1 ? this.parentNode : null; }
+  get isConnected() { return this === this.ownerDocument?.body || Boolean(this.parentNode?.isConnected); }
+  get textContent() { return this.text + this.children.map((child) => child.textContent).join(""); }
+  set textContent(text) { this.empty(); this.text = String(text); }
+  createEl(tag, options) { return this.appendChild(new Element(tag, options, this.ownerDocument)); }
   createDiv(options) { return this.createEl("div", options); }
   createSpan(options) { return this.createEl("span", options); }
   appendChild(child) {
+    if (child.nodeType === 11) {
+      for (const node of [...child.children]) this.appendChild(node);
+      return child;
+    }
     child.remove();
-    child.parent = this;
+    child.parentNode = this;
+    child.ownerDocument = this.ownerDocument;
     this.children.push(child);
-    child.isConnected = this.isConnected;
     return child;
   }
   remove() {
-    if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this);
-    this.parent = null;
-    this.isConnected = false;
+    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+    this.parentNode = null;
   }
-  empty() { this.children.forEach((child) => child.remove()); this.children = []; }
-  setText(text) { this.text = text; }
+  replaceWith(...nodes) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    let next = this.nextElementSibling;
+    while (next && nodes.includes(next)) next = next.nextElementSibling;
+    this.remove();
+    for (const node of nodes) {
+      const added = node.nodeType === 11 ? [...node.children] : [node];
+      for (const child of added) {
+        parent.appendChild(child);
+        if (next) {
+          parent.children.pop();
+          parent.children.splice(parent.children.indexOf(next), 0, child);
+        }
+      }
+    }
+  }
+  get nextElementSibling() { return this.parentNode?.children[this.parentNode.children.indexOf(this) + 1] || null; }
+  replaceChildren(...nodes) { this.empty(); nodes.forEach((node) => this.appendChild(node)); }
+  empty() { [...this.children].forEach((child) => child.remove()); this.text = ""; }
+  setText(text) { this.textContent = text; }
+  addClass(name) { this.classList.add(name); }
+  toggleClass(name, force) { this.classList.toggle(name, force); }
+  setAttribute(name, value) {
+    if (name === "class") this.className = String(value);
+    this.attributes.set(name, String(value));
+  }
+  getAttribute(name) { return name === "class" ? this.className : this.attributes.get(name) ?? null; }
   addEventListener(name, handler) { this.listeners.set(name, handler); }
+  contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
+  matches(selector) {
+    const match = /^([\w-]+)?((?:\.[\w-]+)*)(?:\[data-([\w-]+)(?:="([^"]*)")?\])?$/.exec(selector);
+    if (!match) throw new Error(`Unsupported test selector: ${selector}`);
+    const [, tag, classes, attribute, value] = match;
+    const key = attribute?.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+    return (!tag || this.tag === tag) && classes.split(".").filter(Boolean).every((name) => this.classList.contains(name))
+      && (!attribute || (key in this.dataset && (value === undefined || this.dataset[key] === value)));
+  }
+  closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector) || null; }
+  querySelectorAll(selector) {
+    return this.children.flatMap((child) => [...(child.matches(selector) ? [child] : []), ...child.querySelectorAll(selector)]);
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   getContext() {
     return { measureText: () => ({ width: 100 }), fillRect: () => {} };
   }
   toBlob(callback) { callback(new Blob(["PNG"], { type: "image/png" })); }
-  find(cls) {
-    return this.children.flatMap((child) => [
-      ...(child.cls === cls ? [child] : []), ...child.find(cls)
-    ]);
+  find(cls) { return this.querySelectorAll(`.${cls}`); }
+}
+
+function createDocument() {
+  const document = {
+    createElement: (tag) => new Element(tag, {}, document),
+    createDocumentFragment: () => new Element("#document-fragment", {}, document)
+  };
+  document.body = document.createElement("body");
+  return document;
+}
+
+function testWorkspaceHighlightGesture() {
+  const document = createDocument();
+  const listeners = new Map();
+  let selection;
+  let caretCalls = 0;
+  let repaired;
+  const window = {
+    addEventListener: (type, handler) => listeners.set(type, handler),
+    removeEventListener: (type, handler) => {
+      if (listeners.get(type) === handler) listeners.delete(type);
+    },
+    getSelection: () => selection,
+    getComputedStyle: () => ({ direction: "ltr" })
+  };
+  document.defaultView = window;
+  const layer = document.body.createDiv();
+  const first = layer.createSpan({ cls: "paperlib-pdf-text-item", text: "Alpha beta" });
+  first.dataset.textIndex = "2";
+  first.getBoundingClientRect = () => ({ left: 10, right: 100, top: 10, bottom: 30, width: 90, height: 20 });
+  const second = layer.createSpan({ cls: "paperlib-pdf-text-item", text: "A longer second line" });
+  second.dataset.textIndex = "4";
+  second.getBoundingClientRect = () => ({ left: 10, right: 220, top: 40, bottom: 60, width: 210, height: 20 });
+  const node = { nodeType: 3, parentElement: first, data: first.textContent };
+  selection = {
+    rangeCount: 1, isCollapsed: false, anchorNode: node, anchorOffset: 0,
+    focusNode: document.body,
+    setBaseAndExtent: (...args) => { repaired = args; }
+  };
+  document.caretPositionFromPoint = (x, y) => {
+    caretCalls += 1;
+    assert.ok(y >= 10 && y <= 30, "edge repair must stay on the original visual line");
+    return { offsetNode: node, offset: x > 50 ? node.data.length : 0 };
+  };
+  const view = new ResearchView({}, createPlugin(async () => bytes));
+  view.repairWorkspacePdfSelectionEnd(layer, { clientX: 300, clientY: 20 });
+  assert.deepEqual(repaired, [node, 0, node, node.data.length]);
+  selection.anchorOffset = node.data.length;
+  view.repairWorkspacePdfSelectionEnd(layer, { clientX: -30, clientY: 20 });
+  assert.deepEqual(repaired, [node, node.data.length, node, 0]);
+  selection.focusNode = node;
+  view.repairWorkspacePdfSelectionEnd(layer, { clientX: 300, clientY: 20 });
+  assert.equal(caretCalls, 2, "valid native text endpoints must stay unchanged");
+
+  let saves = 0;
+  view.handlePdfHighlight = () => { saves += 1; };
+  view.beginWorkspacePdfHighlight({ button: 0, pointerId: 7 }, layer, {}, 1);
+  assert.deepEqual([...listeners.keys()].sort(), ["blur", "pointercancel", "pointerup"]);
+  listeners.get("pointerup")({ pointerId: 8 });
+  assert.equal(saves, 0, "unrelated pointers must not complete a highlight");
+  listeners.get("pointerup")({ pointerId: 7, target: document.body });
+  assert.equal(saves, 1, "release outside the layer must complete the gesture");
+  assert.equal(listeners.size, 0);
+  assert.equal(view.pdfHighlightGestureCleanup, null);
+  for (const type of ["pointercancel", "blur"]) {
+    view.beginWorkspacePdfHighlight({ button: 0 }, layer, {}, 1);
+    listeners.get(type)();
+    assert.equal(listeners.size, 0);
+    assert.equal(saves, 1, "cancelled gestures must not save highlights");
+  }
+  view.beginWorkspacePdfHighlight({ button: 0 }, layer, {}, 1);
+  view.disposeWorkspacePdfView();
+  assert.equal(listeners.size, 0, "closing the PDF must remove gesture listeners");
+}
+
+async function testWorkspaceRendering() {
+  const previousWindow = globalThis.window;
+  const document = createDocument();
+  const timers = new Map();
+  const openedUrls = [];
+  let selection = null;
+  const window = {
+    document, devicePixelRatio: 2,
+    getSelection: () => selection,
+    open: (...args) => openedUrls.push(args),
+    setTimeout: (callback) => { const id = Symbol(); timers.set(id, callback); return id; },
+    clearTimeout: (id) => timers.delete(id)
+  };
+  document.defaultView = window;
+  globalThis.window = window;
+  try {
+    for (const mobile of [false, true]) {
+      const plugin = createPlugin(async () => bytes);
+      const paper = { id: `lazy-${mobile}`, pdfPath: file.path };
+      const workspace = { zoom: 1, mobileZoom: 1, highlights: [], inkStrokes: [] };
+      plugin.settings.papers = [paper];
+      plugin.isMobileApp = () => mobile;
+      plugin.ensureResearchWorkspace = (value) => { assert.equal(value, paper); return workspace; };
+      const pageRequests = [];
+      const textRequests = [];
+      const renders = [];
+      const annotations = new Map();
+      const gates = [];
+      let holdRenders = false;
+      let cancelledTextLayers = 0;
+      const pdf = {
+        numPages: 6,
+        getPage: async (pageNumber) => {
+          pageRequests.push(pageNumber);
+          return {
+            getViewport: ({ scale }) => ({
+              width: 600 * scale, height: 800 * scale, scale, viewBox: [0, 0, 600, 800],
+              convertToViewportPoint: (x, y) => [x * scale, (800 - y) * scale],
+              convertToPdfPoint: (x, y) => [x / scale, 800 - y / scale],
+              convertToViewportRectangle: ([x1, y1, x2, y2]) => [x1 * scale, (800 - y1) * scale, x2 * scale, (800 - y2) * scale]
+            }),
+            getTextContent: async () => {
+              textRequests.push(pageNumber);
+              return { items: [{ type: "beginMarkedContent" }, { str: `Page ${pageNumber}` }] };
+            },
+            getAnnotations: async () => annotations.get(pageNumber) || [],
+            render: (options) => {
+              renders.push({ pageNumber, options });
+              const promise = holdRenders ? new Promise((resolve) => gates.push(resolve)) : Promise.resolve();
+              return { promise, cancel: () => {} };
+            }
+          };
+        },
+        getDestination: async (name) => {
+          assert.equal(name, "chapter");
+          return [{ num: 7, gen: 0 }, { name: "XYZ" }, 20, 750, 9];
+        },
+        getPageIndex: async (ref) => { assert.deepEqual(ref, { num: 7, gen: 0 }); return 2; }
+      };
+      pdfJsMock = {
+        getDocument: () => ({ promise: Promise.resolve(pdf) }),
+        TextLayer: class {
+          constructor({ textContentSource, container }) {
+            this.items = textContentSource.items;
+            this.container = container;
+            this.textDivs = [];
+          }
+          async render() {
+            for (const item of this.items) {
+              if (item.str === undefined) continue;
+              this.textDivs.push(this.container.createSpan({ text: item.str }));
+            }
+            this.container.createDiv({ cls: "endOfContent" });
+          }
+          cancel() { cancelledTextLayers += 1; }
+          update() {}
+        }
+      };
+      const view = new ResearchView({}, plugin);
+      view.app = plugin.app;
+      view.paperId = paper.id;
+      view.createPdfInkLayer = (parent) => parent.createDiv({ cls: "ink" });
+      view.applyPdfMarkings = () => {};
+      // Visibility is advanced explicitly, without wall-clock timers.
+      view.scheduleWorkspacePdfVisibility = () => {};
+      const host = document.body.createDiv();
+      await view.renderPdfDocument(host, paper, workspace);
+      const flush = () => new Promise((resolve) => setImmediate(resolve));
+      await flush();
+      assert.deepEqual([...view.pdfCache.pages.keys()].sort(), [1, 2]);
+      assert.ok(pageRequests.every((pageNumber) => pageNumber <= 2), "offscreen placeholders must not fetch pages");
+      assert.equal(host.find("paperlib-selectable-pdf-page").length, 6);
+      assert.equal(host.find("paperlib-pdf-page-placeholder").length, 4);
+      const first = view.pdfCache.pageViews.get(1);
+      const textLayer = first.element.querySelector(".paperlib-pdf-text-layer");
+      assert.deepEqual(view.getCanvasSelectionItemSpans(textLayer).map((span) => span.dataset.textIndex), ["1"],
+        "TextLayer spans must retain original item indices, excluding unmapped DOM");
+      assert.equal(textLayer.textContent, "Page 1");
+
+      holdRenders = true;
+      for (const pageNumber of [3, 4, 5]) view.pdfCache.pageViews.get(pageNumber).near = true;
+      const third = view.ensureWorkspacePdfPage(3);
+      assert.equal(view.ensureWorkspacePdfPage(3), third, "duplicate requests must share their in-flight render");
+      const pending = [third, view.ensureWorkspacePdfPage(4), view.ensureWorkspacePdfPage(5)];
+      await flush();
+      const maximum = mobile ? 1 : 2;
+      assert.equal(gates.length, maximum, "render concurrency must respect the platform limit");
+      assert.equal(view.pdfActiveRenders, maximum);
+      while (gates.length) {
+        gates.shift()();
+        await flush();
+        assert.ok(view.pdfActiveRenders <= maximum);
+      }
+      await Promise.all(pending);
+      holdRenders = false;
+      assert.equal(view.pdfCache.pages.size, 5);
+      assert.equal(textRequests.filter((pageNumber) => pageNumber === 3).length, 1);
+
+      const originalCanvas = first.pageData.canvas;
+      const originalData = first.pageData;
+      view.assignWorkspaceZoom(workspace, 2);
+      await view.ensureWorkspacePdfPage(1);
+      await flush();
+      assert.equal(first.pageData, originalData);
+      assert.equal(first.element.querySelector(".paperlib-pdf-text-layer"), textLayer,
+        "zoom must preserve selectable text DOM");
+      assert.notEqual(first.pageData.canvas, originalCanvas);
+      assert.equal(originalCanvas.width, 0, "replaced bitmap storage must be released");
+      assert.equal(first.pageData.ratio, 4);
+      assert.equal(first.pageData.canvas.width, Math.ceil(first.pageData.viewport.width * 4));
+      assert.equal(textRequests.filter((pageNumber) => pageNumber === 1).length, 1);
+      assert.deepEqual(renders.at(-1).options.transform, [4, 0, 0, 4, 0, 0]);
+      const selectedCanvas = first.pageData.canvas;
+      selection = { isCollapsed: false, rangeCount: 1, getRangeAt: () => ({ intersectsNode: (node) => node === first.element }) };
+      view.assignWorkspaceZoom(workspace, 0.5);
+      await view.ensureWorkspacePdfPage(1);
+      assert.equal(first.pageData.canvas, selectedCanvas, "selected pages must not be rerendered");
+      selection = null;
+      await view.ensureWorkspacePdfPage(1);
+      await flush();
+      assert.equal(first.pageData.ratio, 1);
+      const large = { width: 10000, height: 10000 };
+      const ratio = view.workspacePdfRenderRatio(large);
+      assert.ok(ratio * ratio * large.width * large.height <= (mobile ? 6 : 12) * 1024 * 1024 + 0.001);
+      assert.ok(ratio * large.width <= 8192);
+
+      view.assignWorkspaceZoom(workspace, 1);
+      view.containerEl = view.contentEl = host;
+      view.render = () => assert.fail("zoom must not rebuild the workspace");
+      let toolbarRefreshes = 0;
+      let resolutionRefreshes = 0;
+      const persisted = [];
+      plugin.persistResearchWorkspace = (...args) => { persisted.push(args); };
+      view.refreshCanvasToolbar = (root) => { assert.equal(root, host); toolbarRefreshes += 1; };
+      const refreshResolution = view.refreshWorkspacePdfResolution;
+      view.refreshWorkspacePdfResolution = () => { resolutionRefreshes += 1; };
+      const viewport = document.body.createDiv();
+      viewport.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600 });
+      viewport.scrollLeft = 40;
+      viewport.scrollTop = 60;
+      const stage = viewport.createDiv();
+      const board = stage.createDiv();
+      view.installCanvasZoom(viewport, stage, board, paper, workspace, 2600, 1800);
+      view.setZoom(paper, 1.5);
+      assert.equal(viewport.scrollLeft, 260);
+      assert.equal(viewport.scrollTop, 240);
+      view.setZoom(paper, 2);
+      assert.equal(board.style.transform, "scale(2)");
+      assert.equal(stage.style.width, "5200px");
+      assert.equal(stage.style.height, "3600px");
+      assert.equal(toolbarRefreshes, 2);
+      assert.equal(persisted.length, 0);
+      assert.equal(timers.size, 1, "zoom persistence must be debounced");
+      const saveZoom = [...timers.values()][0];
+      timers.clear();
+      saveZoom();
+      assert.deepEqual(persisted, [[paper, false]]);
+      assert.equal(resolutionRefreshes, 1);
+      view.refreshWorkspacePdfResolution = refreshResolution;
+
+      annotations.set(1, [
+        { subtype: "Link", rect: [-10, 10, 80, 40], url: "https://example.com/paper", titleObj: { str: "Paper" } },
+        { subtype: "Link", rect: [10, 10, 30, 30], url: "mailto:reader@example.com" },
+        { subtype: "Link", rect: [10, 10, 30, 30], dest: "chapter" },
+        { subtype: "Link", rect: [10, 10, 30, 30], action: "NextPage" },
+        ...["javascript:alert(1)", "file:///tmp/paper.pdf", "data:text/html,unsafe", "https://example.com/\nunsafe"].map((url) => ({ subtype: "Link", rect: [10, 10, 30, 30], url })),
+        { subtype: "Link", rect: [10, 10, 30, 30], url: "https://example.com", noView: true },
+        { subtype: "Link", rect: [700, 10, 800, 30], url: "https://example.com" },
+        { subtype: "Link", rect: [NaN, 10, 30, 30], dest: "chapter" },
+        { subtype: "Text", rect: [10, 10, 30, 30], url: "https://example.com" }
+      ]);
+      await view.renderWorkspacePdfLinks(first.pageData.page, first.pageData, first.element);
+      const links = first.element.querySelectorAll("a.paperlib-pdf-link");
+      assert.equal(links.length, 4, "only safe, visible link annotations must become anchors");
+      assert.equal(links[0].getAttribute("aria-label"), "Paper");
+      assert.equal(links[0].style.left, "0px");
+      assert.equal(parseFloat(links[0].style.width), first.pageData.viewport.scale * 80);
+      assert.equal(links[0].rel, "noopener noreferrer");
+      assert.equal(links[0].tabIndex, 0);
+      const click = host.listeners.get("click");
+      view.installWorkspacePdfLinkEvents(host);
+      assert.equal(host.listeners.get("click"), click, "host delegation must be installed only once");
+      let prevented = 0;
+      let stopped = 0;
+      const event = { type: "click", button: 0, target: links[0].createSpan(),
+        preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } };
+      const openedInitially = openedUrls.length;
+      click(event);
+      assert.equal(openedUrls.length, openedInitially + 1);
+      assert.deepEqual(openedUrls.at(-1), ["https://example.com/paper", "_blank", "noopener,noreferrer"]);
+      assert.equal(prevented, 1);
+      assert.equal(stopped, 1);
+      const openedBefore = openedUrls.length;
+      view.toolMode = "highlight";
+      click(event);
+      assert.equal(openedUrls.length, openedBefore, "drawing tools must not activate links");
+      await view.renderWorkspacePdfLinks(first.pageData.page, first.pageData, first.element);
+      assert.ok(first.element.querySelectorAll("a.paperlib-pdf-link").every((anchor) => anchor.tabIndex === -1));
+      view.toolMode = "select";
+      event.target = first.element.querySelector("a.paperlib-pdf-link").createSpan();
+      view.pdfRenderToken += 1;
+      click(event);
+      assert.equal(openedUrls.length, openedBefore, "stale document links must not activate");
+      assert.equal(stopped, 2, "stale clicks must still be isolated from canvas handlers");
+      view.pdfRenderToken -= 1;
+
+      host.offsetWidth = 700;
+      host.offsetHeight = 600;
+      host.getBoundingClientRect = () => ({ left: 10, top: 20, width: 1400, height: 1200, bottom: 1220 });
+      host.querySelector(".paperlib-canvas-pdf-meta").offsetHeight = 30;
+      const target = view.pdfCache.pageViews.get(3);
+      target.element.getBoundingClientRect = () => ({ left: 210, top: 2020,
+        width: target.pageData.viewport.width * 2, height: target.pageData.viewport.height * 2 });
+      assert.equal(await view.followWorkspacePdfLink(links[2].__paperlibPdfLink), true);
+      const scale = target.pageData.viewport.scale;
+      assert.ok(Math.abs(host.scrollLeft - (100 + 20 * scale)) < 0.001);
+      assert.ok(Math.abs(host.scrollTop - (1000 + 50 * scale - 30)) < 0.001);
+      assert.equal(view.getWorkspaceZoom(workspace), 2, "PDF destination zoom must not alter board zoom");
+      assert.equal(await view.followWorkspacePdfLink({ ...links[2].__paperlibPdfLink, destination: [99] }), false);
+      const coldTarget = view.pdfCache.pageViews.get(6);
+      assert.equal(coldTarget.pageData, null);
+      assert.equal(coldTarget.near, false);
+      const scrollDestination = view.scrollWorkspacePdfDestination;
+      view.scrollWorkspacePdfDestination = (scrollHost, record, destination) => {
+        assert.equal(scrollHost, host);
+        assert.equal(record, coldTarget);
+        assert.equal(record.pinned, 1, "offscreen destinations must be pinned until navigation finishes");
+        assert.ok(host.contains(record.element));
+        assert.deepEqual(destination, [5, { name: "Fit" }]);
+        return true;
+      };
+      assert.equal(await view.followWorkspacePdfLink({ ...links[2].__paperlibPdfLink, destination: [5, { name: "Fit" }] }), true);
+      await flush();
+      assert.equal(coldTarget.pinned, 0);
+      assert.ok(coldTarget.pageData, "internal links must load previously unrendered destinations");
+      view.scrollWorkspacePdfDestination = scrollDestination;
+      const previousLinks = first.element.querySelectorAll("a.paperlib-pdf-link");
+      const getAnnotations = first.pageData.page.getAnnotations;
+      let resolveAnnotations;
+      first.pageData.page.getAnnotations = () => new Promise((resolve) => { resolveAnnotations = resolve; });
+      const staleLinks = view.renderWorkspacePdfLinks(first.pageData.page, first.pageData, first.element);
+      view.pdfRenderToken += 1;
+      resolveAnnotations([]);
+      await staleLinks;
+      assert.deepEqual(first.element.querySelectorAll("a.paperlib-pdf-link"), previousLinks,
+        "late annotations from an obsolete render must not replace current links");
+      view.pdfRenderToken -= 1;
+      first.pageData.page.getAnnotations = getAnnotations;
+
+      host.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600 });
+      for (const record of view.pdfCache.pageViews.values()) {
+        record.element.getBoundingClientRect = () => record.pageNumber === 3
+          ? { top: 100, bottom: 500 } : { top: 3000, bottom: 3800 };
+      }
+      const second = view.pdfCache.pageViews.get(2);
+      second.pinned = true;
+      selection = { isCollapsed: false, rangeCount: 1, getRangeAt: () => ({ intersectsNode: (node) => node === first.element }) };
+      const fourth = view.pdfCache.pageViews.get(4);
+      const evictedCanvas = fourth.pageData.canvas;
+      const evictedElement = fourth.element;
+      view.updateWorkspacePdfVisibility();
+      await flush();
+      assert.equal(first.pageData, originalData, "selected offscreen pages must be retained");
+      assert.ok(second.pageData, "pinned link destinations must be retained");
+      assert.equal(fourth.pageData, null);
+      assert.equal(evictedCanvas.width, 0);
+      assert.equal(evictedElement.isConnected, false);
+      assert.equal(host.contains(evictedElement), false);
+      assert.ok(fourth.element.classList.contains("paperlib-pdf-page-placeholder"));
+      assert.deepEqual(host.find("paperlib-selectable-pdf-page").map((element) => element.dataset.page), ["1", "2", "3", "4", "5", "6"]);
+      assert.ok(cancelledTextLayers >= 2);
+      selection = null;
+      fourth.near = true;
+      await view.ensureWorkspacePdfPage(4);
+      await flush();
+      assert.equal(textRequests.filter((pageNumber) => pageNumber === 4).length, 2,
+        "an evicted page must rebuild its text when requested again");
+      assert.notEqual(fourth.element, evictedElement);
+      assert.equal(fourth.element.ownerDocument, document);
+      assert.equal(fourth.element.parentElement, view.pdfPagesHost);
+      const canvases = [...view.pdfCache.pages.values()].map((data) => data.canvas);
+      view.disposeWorkspacePdfView();
+      assert.equal(view.pdfCache.pages.size, 0);
+      assert.equal(view.pdfCache.pageViews.size, 0);
+      assert.ok(canvases.every((canvas) => canvas.width === 0 && canvas.height === 0));
+      assert.equal(view.pdfHost, null);
+    }
+  } finally {
+    globalThis.window = previousWindow;
   }
 }
 
@@ -183,15 +626,17 @@ async function run() {
           getPage: async (pageNumber) => ({
             getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale, scale, transform: [1, 0, 0, 1, 0, 0] }),
             render: () => { renderedPages.push(pageNumber); return { promise: Promise.resolve() }; },
-            getTextContent: async () => ({ items: [{ str: `Page ${pageNumber}`, width: 100, transform: [12, 0, 0, 12, 10, 20] }] })
+            getTextContent: async () => ({ items: [{ str: `Page ${pageNumber}`, width: 100, transform: [12, 0, 0, 12, 10, 20] }] }),
+            getAnnotations: async () => []
           })
         };
         documents.push(document);
         return { promise: Promise.resolve(document) };
       }
     };
-    globalThis.document = { createElement: (tag) => new Element(tag) };
+    globalThis.document = createDocument();
     globalThis.window = { document: globalThis.document, devicePixelRatio: 2 };
+    globalThis.document.defaultView = globalThis.window;
     let readCalls = 0;
     globalThis.fetch = async (url) => {
       assert.equal(url, resourceUrl);
@@ -208,7 +653,7 @@ async function run() {
       view.app = protectedPlugin.app;
       view.createPdfInkLayer = (parent) => parent.createDiv({ cls: "ink" });
       view.applyPdfMarkings = () => {};
-      const host = new Element("div");
+      const host = globalThis.document.body.createDiv();
       await view.renderPdfDocument(host, paper, workspace);
       assert.equal(host.find("paperlib-selectable-pdf-page").length, 2);
       assert.equal(host.find("paperlib-pdf-text-item")[1].text, "Page 2");
@@ -220,11 +665,11 @@ async function run() {
       textLayer.listeners.get("pointerdown")({ button: 0 });
       assert.equal(selected, true, "the rendered text layer must retain selection handlers");
       const readsBefore = readCalls;
-      await view.renderPdfDocument(new Element("div"), paper, workspace);
+      await view.renderPdfDocument(globalThis.document.body.createDiv(), paper, workspace);
       assert.equal(readCalls, readsBefore, "reopening the same PDF must reuse its cache");
       const cached = view.pdfCache.document;
       view.pdfCache.path = "Papers/old.pdf";
-      await view.renderPdfDocument(new Element("div"), paper, workspace);
+      await view.renderPdfDocument(globalThis.document.body.createDiv(), paper, workspace);
       assert.equal(cached.destroyed, true, "switching PDFs must release the previous document");
     }
 
@@ -240,12 +685,12 @@ async function run() {
 
     const failingView = new ResearchView({}, protectedPlugin);
     failingView.app = protectedPlugin.app;
-    const failedHost = new Element("div");
+    const failedHost = globalThis.document.body.createDiv();
     globalThis.fetch = async () => ({ ok: false, status: 403 });
     await failingView.renderPdfDocument(failedHost, paper, workspace);
     assert.match(failedHost.find("paperlib-pdf-loading")[0].children.at(-1).text, /EPERM.*HTTP 403/);
     assert.equal(failedHost.find("paperlib-canvas-pdf-pages").length, 0);
-    const missingHost = new Element("div");
+    const missingHost = globalThis.document.body.createDiv();
     await failingView.renderPdfDocument(missingHost, { pdfPath: "Papers/missing.pdf" }, workspace);
     assert.match(missingHost.find("paperlib-pdf-loading")[0].children.at(-1).text, /找不到 PDF 文件/);
     assert.equal(loggedErrors.length, 2);
@@ -380,6 +825,9 @@ async function run() {
       globalThis.fetch = async () => { throw new Error("unrelated read errors must avoid fetch"); };
       await assert.rejects(nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } }), /ENOENT/);
     }
+    await testWorkspaceRendering();
+    testWorkspaceHighlightGesture();
+    assert.equal(loggedErrors.length, 2, "workspace rendering must not introduce unexpected errors");
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.document = originalDocument;
