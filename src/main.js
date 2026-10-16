@@ -79,7 +79,28 @@ import {
   titleSimilarity
 } from "./metadata-match.js";
 import { STAR_FEEDBACK_DELAY, iconButton, itemViewContentRoot, setPaperlibIcon } from "./ui-utils.js";
-import { decodeEntities, stripMarkup } from "./text-utils.js";
+import { decodeEntities, formatAIFileSize, formatAIRemainingTime, markdownText, stripMarkup, truncate } from "./text-utils.js";
+import {
+  arxivIdFromDoi,
+  isArxivDoi,
+  isPlausiblePaperYear,
+  normalizeArxivId,
+  normalizeDoiInput,
+  normalizePaperTag,
+  normalizePaperTags,
+  safeFileName,
+  uniqueId,
+  workspaceId,
+  yearFromArxivId
+} from "./paper-utils.js";
+import {
+  collectionBaseName,
+  collectionParentPath,
+  collectionPathContains,
+  expandCollectionPaths,
+  normalizeCollectionPath,
+  safeCollectionPath
+} from "./collection-utils.js";
 import {
   CCFDDL_ACCEPTANCE_BASE_URL,
   CCFDDL_CONFERENCE_DATABASE_URL,
@@ -283,32 +304,6 @@ function favoriteColorValue(value) {
   return FAVORITE_COLORS.find((color) => color.id === id)?.value || FAVORITE_COLORS[0].value;
 }
 
-function normalizePaperTag(value) {
-  let tag = stripMarkup(value || "").normalize("NFKC").trim().replace(/^#+/, "");
-  if (!tag) return "";
-  tag = tag
-    .replace(/[\s\u00a0]+/g, "-")
-    .replace(/[^\p{L}\p{N}_/-]+/gu, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/\/{2,}/g, "/")
-    .replace(/^[-/]+|[-/]+$/g, "");
-  if (!tag || /^\d+(?:[-/]\d+)*$/.test(tag)) return "";
-  return tag.slice(0, 100).replace(/[-/]+$/g, "");
-}
-
-function normalizePaperTags(values = []) {
-  const source = Array.isArray(values) ? values : String(values || "").split(/[;,]/);
-  const result = [];
-  const seen = new Set();
-  source.forEach((value) => {
-    const tag = normalizePaperTag(value);
-    const key = tag.toLocaleLowerCase();
-    if (!tag || seen.has(key)) return;
-    seen.add(key);
-    result.push(tag);
-  });
-  return result;
-}
 const SEMANTIC_SCHOLAR_PAPER_CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const SEMANTIC_SCHOLAR_PAPER_CACHE_MAX_ENTRIES = 250;
 function highlighterCursor(color) {
@@ -398,132 +393,6 @@ const DEFAULT_SETTINGS = {
   paperComposerPdfMessageCards: {},
   paperComposerDirectContextBindings: {}
 };
-
-function uniqueId() {
-  return `paper-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function workspaceId(prefix = "node") {
-  return `paperlib-${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
-}
-
-function markdownText(value) {
-  return String(value || "").replace(/\r/g, "").trim();
-}
-
-function truncate(text, length = 58) {
-  if (!text) return "—";
-  return text.length > length ? `${text.slice(0, length - 1)}…` : text;
-}
-
-function safeFileName(value) {
-  return value.replace(/[\\/:*?"<>|#^[\]]/g, "-").replace(/\s+/g, " ").trim().slice(0, 120);
-}
-
-function normalizeCollectionPath(value) {
-  return String(value || "")
-    .replace(/\\/g, "/")
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment && segment !== "." && segment !== "..")
-    .join("/");
-}
-
-function collectionPathContains(parent, candidate) {
-  const normalizedParent = normalizeCollectionPath(parent);
-  const normalizedCandidate = normalizeCollectionPath(candidate);
-  return Boolean(normalizedParent && normalizedCandidate
-    && (normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}/`)));
-}
-
-function collectionParentPath(value) {
-  const parts = normalizeCollectionPath(value).split("/").filter(Boolean);
-  parts.pop();
-  return parts.join("/");
-}
-
-function collectionBaseName(value) {
-  return normalizeCollectionPath(value).split("/").filter(Boolean).pop() || "";
-}
-
-function expandCollectionPaths(values) {
-  const paths = new Set();
-  (values || []).forEach((value) => {
-    const parts = normalizeCollectionPath(value).split("/").filter(Boolean);
-    parts.forEach((_part, index) => paths.add(parts.slice(0, index + 1).join("/")));
-  });
-  return [...paths].sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-}
-
-function safeCollectionPath(value) {
-  return normalizeCollectionPath(value)
-    .split("/")
-    .map((segment) => safeFileName(segment))
-    .filter(Boolean)
-    .join("/");
-}
-
-function normalizeDoiInput(value) {
-  return String(value || "")
-    .trim()
-    .replace(/^doi\s*:\s*/i, "")
-    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
-    .replace(/[\s)>\].,;:]+$/g, "")
-    .toLocaleLowerCase();
-}
-
-function arxivIdFromDoi(value) {
-  return normalizeDoiInput(value).match(/^10\.48550\/arxiv\.(\d{4}\.\d{4,5})(?:v\d+)?$/i)?.[1] || "";
-}
-
-function normalizeArxivId(value) {
-  const raw = String(value || "").trim().replace(/^arxiv\s*:\s*/i, "").replace(/v\d+$/i, "");
-  const modern = raw.match(/^(\d{2})(\d{2})\.(\d{4,5})$/);
-  if (modern) {
-    const year = Number(modern[1]);
-    const month = Number(modern[2]);
-    const currentYear = new Date().getFullYear() % 100;
-    return year >= 7 && year <= currentYear + 1 && month >= 1 && month <= 12 ? raw : "";
-  }
-  return /^[a-z][a-z0-9.-]*\/\d{7}$/i.test(raw) ? raw : "";
-}
-
-function yearFromArxivId(value) {
-  const id = normalizeArxivId(value);
-  const match = id.match(/^(\d{2})(\d{2})\./);
-  if (!match) return 0;
-  const year = 2000 + Number(match[1]);
-  const month = Number(match[2]);
-  return month >= 1 && month <= 12 ? year : 0;
-}
-
-function isPlausiblePaperYear(value, arxiv = "") {
-  const year = Number(value) || 0;
-  if (year < 1800 || year > new Date().getFullYear() + 2) return false;
-  const arxivYear = yearFromArxivId(arxiv);
-  return !arxivYear || Math.abs(year - arxivYear) <= 10;
-}
-
-function isArxivDoi(value) {
-  return Boolean(arxivIdFromDoi(value));
-}
-
-function formatAIFileSize(bytes = 0) {
-  const size = Math.max(0, Number(bytes) || 0);
-  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
-  return `${Math.max(1, Math.round(size / 1024))} KB`;
-}
-
-function formatAIRemainingTime(milliseconds) {
-  const seconds = Math.max(0, Math.ceil((Number(milliseconds) || 0) / 1000));
-  if (seconds < 5) return "即将完成";
-  if (seconds < 60) return `约 ${seconds} 秒`;
-  const minutes = Math.ceil(seconds / 60);
-  if (minutes < 60) return `约 ${minutes} 分钟`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder ? `约 ${hours} 小时 ${remainder} 分钟` : `约 ${hours} 小时`;
-}
 
 function aiMimeForName(name = "") {
   const extension = String(name).split(".").pop().toLocaleLowerCase();

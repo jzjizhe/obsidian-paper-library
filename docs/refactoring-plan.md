@@ -30,25 +30,26 @@
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
 | 9 | `ui-utils.js` | `setPaperlibIcon`、`iconButton`、`itemViewContentRoot`、图标别名表 | ✅ 已拆分 |
-| 10 | `modals/` | 15 个弹窗按域分组：删除确认、本地管线、引文样式、图片浏览 | ⬜ 未拆分 |
+| 10 | `paper-utils.js` / `collection-utils.js` / `text-utils.js` 扩充 | 为 modals 拆分准备的共享工具层：id 生成、文件名、标签、DOI/arXiv、收藏夹路径、通用格式化 | ✅ 已拆分 |
+| 11 | `modals/` | 15 个弹窗按域分组：删除确认、本地管线、引文样式、图片浏览 | ⬜ 未拆分 |
 
 ## 阶段三：视图层
 
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
-| 11 | `views/research-workspace.js` | `PaperResearchWorkspaceView` 研究画布（约 2,600 行） | ⬜ 未拆分 |
-| 12 | `views/library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ⬜ 未拆分 |
-| 13 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ⬜ 未拆分 |
+| 12 | `views/research-workspace.js` | `PaperResearchWorkspaceView` 研究画布（约 2,600 行） | ⬜ 未拆分 |
+| 13 | `views/library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ⬜ 未拆分 |
+| 14 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ⬜ 未拆分 |
 
 ## 阶段四：插件主类瘦身（约 13,500 行，风险最高，最后做）
 
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
-| 14 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ⬜ 未拆分 |
-| 15 | `services/pdf-figures.js` | PDF 图片识别渲染（含 `getPdfImageRegions` 等头部工具） | ⬜ 未拆分 |
-| 16 | `services/research-workspace-store.js` | 研究画布的持久化与自动整理 | ⬜ 未拆分 |
-| 17 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ⬜ 未拆分 |
-| 18 | `main.js` 收尾 | 插件类只保留 onload 装配与方法委托 | ⬜ 未拆分 |
+| 15 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ⬜ 未拆分 |
+| 16 | `services/pdf-figures.js` | PDF 图片识别渲染（含 `getPdfImageRegions` 等头部工具） | ⬜ 未拆分 |
+| 17 | `services/research-workspace-store.js` | 研究画布的持久化与自动整理 | ⬜ 未拆分 |
+| 18 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ⬜ 未拆分 |
+| 19 | `main.js` 收尾 | 插件类只保留 onload 装配与方法委托 | ⬜ 未拆分 |
 
 ## 拆分记录
 
@@ -58,7 +59,7 @@
 
 ### ✅ 2. venue-rankings.js（commit `34e4082`）
 
-317 行。排名规则表（CCF/CORE/TH-CPL）、ShowJCR/ccfddl/cs-conf-stats 数据源地址、venue 推断逻辑。`isRepositoryVenue` 从 600 行外归位到本模块。两个 `SEMANTIC_SCHOLAR_PAPER_CACHE_*` 常量刻意留在 main.js，等 Semantic Scholar 服务（#14）拆分时带走。
+317 行。排名规则表（CCF/CORE/TH-CPL）、ShowJCR/ccfddl/cs-conf-stats 数据源地址、venue 推断逻辑。`isRepositoryVenue` 从 600 行外归位到本模块。两个 `SEMANTIC_SCHOLAR_PAPER_CACHE_*` 常量刻意留在 main.js，等 Semantic Scholar 服务（#15）拆分时带走。
 
 ### ✅ 3. text-utils.js（commit `34e4082`）
 
@@ -93,3 +94,7 @@
 86 行。`setPaperlibIcon`（89 处调用）、`iconButton`（54 处）、`itemViewContentRoot`（8 处）及图标别名/符号兜底表。模块改为直接 `import { setIcon } from "obsidian"`，删掉了原来的 `obsidianSetIcon` 别名中转。阶段二开始模块依赖 Obsidian，验证方式改为打包产物 + 测试套件。
 
 附带发现并处理：`claudian-integration`/`mobile` 两个测试的源码断言因代码搬走而失败，已改为同时读 `src/ui-utils.js`。另外确认 `highlight`/`mobile`/`semantic-scholar` 三个测试（不在 npm test 链中）在重构前的基线 commit 上就以相同方式失败，属历史遗留，与本次拆分无关。
+
+### ✅ 10. paper-utils.js / collection-utils.js / text-utils.js 扩充
+
+121 + 45 + 37 行。拆 modals 的前置：弹窗依赖的 `uniqueId`、`normalizePaperTags`、`expandCollectionPaths` 等 helper 原本都在 main.js 顶层，直接拆弹窗会形成 modals → main.js 的反向依赖。先把它们沉淀为共享工具层：`paper-utils`（id/文件名/标签/DOI/arXiv）、`collection-utils`（收藏夹路径，依赖 paper-utils 的 `safeFileName`）、text-utils 扩充（`truncate`/`markdownText`/`formatAIFileSize`/`formatAIRemainingTime`）。每段逐字节验证通过。
