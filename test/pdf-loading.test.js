@@ -592,6 +592,33 @@ function testWorkspaceSelectionPopupPosition() {
   }
 }
 
+function testWorkspaceZoomDefaults() {
+  const plugin = createPlugin(async () => bytes);
+  const view = new ResearchView({}, plugin);
+  const paper = { id: "default-zoom" };
+  const workspace = plugin.ensureResearchWorkspace(paper);
+  assert.equal(workspace.zoom, 1.4, "new desktop workspaces should default to 140%");
+  assert.equal(view.getWorkspaceZoom(workspace), 1.4);
+  assert.equal(view.getWorkspaceZoom({}), 1.4, "missing desktop zoom should use the default");
+  assert.equal(view.assignWorkspaceZoom({}, undefined), 1.4);
+  const missingZoom = { researchWorkspace: { version: 4 } };
+  assert.equal(plugin.ensureResearchWorkspace(missingZoom).zoom, 1.4);
+  for (const zoom of [0.8, 1, 1.25, 1.6, 2]) {
+    const saved = { researchWorkspace: { version: 4, zoom } };
+    assert.equal(plugin.ensureResearchWorkspace(saved).zoom, zoom, "saved zoom should be preserved");
+    assert.equal(view.getWorkspaceZoom(saved.researchWorkspace), zoom);
+  }
+  assert.equal(view.assignWorkspaceZoom(workspace, 3), 2);
+  assert.equal(view.assignWorkspaceZoom(workspace, 0.1), 0.4);
+  view.assignWorkspaceZoom(workspace, 1.4);
+  plugin.isMobileApp = () => true;
+  assert.equal(view.getWorkspaceZoom(workspace), 1);
+  assert.equal(view.assignWorkspaceZoom({}, undefined), 1);
+  view.prepareMobileWorkspaceFit({ clientWidth: 390, clientHeight: 700 }, paper, workspace);
+  assert.ok(workspace.mobileZoom > 0 && workspace.mobileZoom < 1, "mobile should retain automatic fit");
+  assert.equal(workspace.zoom, 1.4, "mobile fit should preserve the desktop zoom");
+}
+
 async function testWorkspaceRendering() {
   const previousWindow = globalThis.window;
   const document = createDocument();
@@ -1223,6 +1250,7 @@ async function run() {
       globalThis.fetch = async () => { throw new Error("unrelated read errors must avoid fetch"); };
       await assert.rejects(nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } }), /ENOENT/);
     }
+    testWorkspaceZoomDefaults();
     await testWorkspaceRendering();
     testWorkspaceHighlightGesture();
     await testWorkspaceSelectionPopup();

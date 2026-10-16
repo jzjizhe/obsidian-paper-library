@@ -50,6 +50,7 @@ const VIEW_TYPE = "paper-library-view";
 const NAV_VIEW_TYPE = "paper-library-navigation-view";
 const DETAIL_VIEW_TYPE = "paper-library-detail-view";
 const RESEARCH_VIEW_TYPE = "paper-library-research-workspace-view";
+const DEFAULT_RESEARCH_WORKSPACE_ZOOM = 1.4;
 const CLAUDIAN_VIEW_TYPE = "paperlib-paper-composer-view";
 const CLAUDIAN_COLLAB_DETAIL_VIEW_TYPE = "paperlib-paper-composer-collab-detail";
 const CLAUDIAN_VIEW_TYPES = [CLAUDIAN_VIEW_TYPE, CLAUDIAN_COLLAB_DETAIL_VIEW_TYPE];
@@ -5356,14 +5357,17 @@ class PaperResearchWorkspaceView extends ItemView {
 
   getWorkspaceZoom(workspace) {
     const mobile = this.plugin.isMobileApp();
-    const value = Number(mobile ? workspace.mobileZoom : workspace.zoom) || 1;
+    const value = Number(mobile ? workspace.mobileZoom : workspace.zoom)
+      || (mobile ? 1 : DEFAULT_RESEARCH_WORKSPACE_ZOOM);
     return Math.min(2, Math.max(mobile ? 0.1 : 0.4, value));
   }
 
   assignWorkspaceZoom(workspace, value) {
-    const minimum = this.plugin.isMobileApp() ? 0.1 : 0.4;
-    const zoom = Math.round(Math.min(2, Math.max(minimum, Number(value) || 1)) * 100) / 100;
-    if (this.plugin.isMobileApp()) workspace.mobileZoom = zoom;
+    const mobile = this.plugin.isMobileApp();
+    const minimum = mobile ? 0.1 : 0.4;
+    const fallback = mobile ? 1 : DEFAULT_RESEARCH_WORKSPACE_ZOOM;
+    const zoom = Math.round(Math.min(2, Math.max(minimum, Number(value) || fallback)) * 100) / 100;
+    if (mobile) workspace.mobileZoom = zoom;
     else workspace.zoom = zoom;
     return zoom;
   }
@@ -23085,12 +23089,12 @@ module.exports = class PaperLibraryPlugin extends Plugin {
   ensureResearchWorkspace(paper) {
     if (!paper.researchWorkspace || typeof paper.researchWorkspace !== "object") {
       paper.researchWorkspace = {
-        version: 4, zoom: 1, nodes: [], links: [], highlights: [], inkStrokes: [],
+        version: 4, zoom: DEFAULT_RESEARCH_WORKSPACE_ZOOM, nodes: [], links: [], highlights: [], inkStrokes: [],
         pdfFrame: { x: 32, y: 32, width: 720, height: 1080 }
       };
     }
     const workspace = paper.researchWorkspace;
-    workspace.zoom = Number(workspace.zoom) || 1;
+    workspace.zoom = Number(workspace.zoom) || DEFAULT_RESEARCH_WORKSPACE_ZOOM;
     if (Number.isFinite(Number(workspace.mobileZoom))) {
       workspace.mobileZoom = Math.min(2, Math.max(0.1, Number(workspace.mobileZoom)));
     }
