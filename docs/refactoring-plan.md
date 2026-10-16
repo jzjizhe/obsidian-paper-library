@@ -40,7 +40,7 @@
 | 12a | `constants.js`（前置） | 视图/表格/外观/Composer 共享常量；`isPaperLibraryMobile`、`highlighterCursor` 入 ui-utils；`bytesContainAscii` 入 binary-utils；`TITLE_MATCH_THRESHOLD` 入 metadata-match | ✅ 已拆分 |
 | 12 | `views/research-workspace.js` | `PaperResearchWorkspaceView` 研究画布（约 2,600 行） | ⬜ 未拆分 |
 | 13 | `views/library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ⬜ 未拆分 |
-| 14 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ⬜ 未拆分 |
+| 14 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ✅ 已拆分 |
 
 ## 阶段四：插件主类瘦身（约 13,500 行，风险最高，最后做）
 
@@ -109,3 +109,7 @@
 209 行。视图层与插件主类共享的常量全部归位：视图类型标识、`CANVAS_HIGHLIGHT_COLORS`、`PAPER_TABLE_*`、`FAVORITE_COLORS`、`PAPER_COMPOSER_*`、`DEFAULT_SETTINGS`。`DEFAULT_SETTINGS` 引用了 appearance 模块的 `APPEARANCE_PROTOCOL_VERSION`（第一轮遗漏，测试捕获后补上 import）。同时把几个散落的工具归位到语义正确的模块：`isPaperLibraryMobile`/`highlighterCursor` → ui-utils，`bytesContainAscii` → binary-utils，`TITLE_MATCH_THRESHOLD` → metadata-match。
 
 测试基建同步改造：`claudian-integration`/`pdf-ai-modes`/`mobile` 三个"源码约定"测试从读单个文件改为拼接整个 `src/**/*.js`，后续拆分不再需要逐个文件改测试。
+
+### ✅ 14. settings.js
+
+747 行。设置页是视图层里依赖最简单的类，按方案第一个拆。依赖全部显式声明：obsidian（PluginSettingTab/Setting/Notice/setIcon）、constants（色板与默认设置）、appearance、text-utils，以及它要打开的 6 个弹窗（citation/delete/pipeline 三个模块）。逐字节搬运验证通过。原计划编号 12-14 的执行顺序调整为 14 → 12 → 13（按风险从低到高）。
