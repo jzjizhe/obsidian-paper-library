@@ -720,19 +720,57 @@ async function testWorkspaceRendering() {
         "zoom must preserve selectable text DOM");
       assert.notEqual(first.pageData.canvas, originalCanvas);
       assert.equal(originalCanvas.width, 0, "replaced bitmap storage must be released");
-      assert.equal(first.pageData.ratio, 4);
-      assert.equal(first.pageData.canvas.width, Math.ceil(first.pageData.viewport.width * 4));
+      const zoomedRatio = view.workspacePdfRenderRatio(first.pageData.viewport, first.element);
+      assert.ok(zoomedRatio > 4, "zoomed pages should retain extra detail within the pixel budget");
+      assert.equal(first.pageData.ratio, zoomedRatio);
+      assert.equal(first.pageData.canvas.width, Math.ceil(first.pageData.viewport.width * zoomedRatio));
       assert.equal(textRequests.filter((pageNumber) => pageNumber === 1).length, 1);
-      assert.deepEqual(renders.at(-1).options.transform, [4, 0, 0, 4, 0, 0]);
+      assert.deepEqual(renders.at(-1).options.transform, [zoomedRatio, 0, 0, zoomedRatio, 0, 0]);
       const selectedCanvas = first.pageData.canvas;
       selection = { isCollapsed: false, rangeCount: 1, getRangeAt: () => ({ intersectsNode: (node) => node === first.element }) };
       view.assignWorkspaceZoom(workspace, 0.5);
+      view.pdfSelectionGestureCleanup = () => {};
       await view.ensureWorkspacePdfPage(1);
-      assert.equal(first.pageData.canvas, selectedCanvas, "selected pages must not be rerendered");
-      selection = null;
+      assert.equal(first.pageData.canvas, selectedCanvas, "active gestures must retain their bitmap");
+      view.pdfSelectionGestureCleanup = null;
       await view.ensureWorkspacePdfPage(1);
       await flush();
-      assert.equal(first.pageData.ratio, 1);
+      assert.notEqual(first.pageData.canvas, selectedCanvas,
+        "a completed text selection must not prevent resolution updates");
+      assert.equal(first.element.querySelector(".paperlib-pdf-text-layer"), textLayer,
+        "resolution updates must preserve the selected text DOM");
+      assert.equal(selection.isCollapsed, false);
+      assert.equal(first.pageData.ratio, 2);
+      const selectedLowResolutionCanvas = first.pageData.canvas;
+      view.assignWorkspaceZoom(workspace, 1);
+      await view.ensureWorkspacePdfPage(1);
+      await flush();
+      assert.notEqual(first.pageData.canvas, selectedLowResolutionCanvas,
+        "zooming in on selected text must refresh its bitmap resolution");
+      assert.equal(first.pageData.ratio, 4);
+      assert.equal(first.element.querySelector(".paperlib-pdf-text-layer"), textLayer);
+      assert.equal(selection.isCollapsed, false);
+      selection = null;
+      const small = { width: 100, height: 150 };
+      for (const dpr of [1, 1.25, 2, 3]) {
+        window.devicePixelRatio = dpr;
+        for (const zoom of [0.5, 1, 1.25, 2]) {
+          view.assignWorkspaceZoom(workspace, zoom);
+          assert.equal(view.workspacePdfRenderRatio(small), Math.max(1, 2 * dpr * zoom),
+            "fractional zoom and screen density should retain two samples per screen pixel");
+        }
+      }
+      window.devicePixelRatio = 2;
+      view.assignWorkspaceZoom(workspace, 1);
+      const displayedPage = {
+        offsetWidth: 100, offsetHeight: 150,
+        getBoundingClientRect: () => ({ width: 125, height: 187.5 })
+      };
+      assert.equal(view.workspacePdfRenderRatio(small, displayedPage), 5,
+        "the displayed page scale should take precedence over stored zoom");
+      displayedPage.offsetWidth = displayedPage.offsetHeight = 0;
+      assert.equal(view.workspacePdfRenderRatio(small, displayedPage), 4,
+        "unmeasurable pages should fall back to stored zoom");
       const large = { width: 10000, height: 10000 };
       const ratio = view.workspacePdfRenderRatio(large);
       assert.ok(ratio * ratio * large.width * large.height <= (mobile ? 6 : 12) * 1024 * 1024 + 0.001);

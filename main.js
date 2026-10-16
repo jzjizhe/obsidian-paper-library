@@ -5845,10 +5845,16 @@ class PaperResearchWorkspaceView extends ItemView {
     this.pdfHost = null;
   }
 
-  workspacePdfRenderRatio(viewport) {
+  workspacePdfRenderRatio(viewport, pageElement) {
     const window = this.pdfHost?.ownerDocument?.defaultView || globalThis.window;
     const workspace = this.pdfWorkspace || {};
-    const desired = Math.max(1, (window?.devicePixelRatio || 1) * this.getWorkspaceZoom(workspace));
+    const rect = pageElement?.getBoundingClientRect?.();
+    const scaleX = rect?.width / pageElement?.offsetWidth;
+    const scaleY = rect?.height / pageElement?.offsetHeight;
+    const scale = [scaleX, scaleY].every((value) => Number.isFinite(value) && value > 0)
+      ? Math.max(scaleX, scaleY) : this.getWorkspaceZoom(workspace);
+    // Supersampling reduces text softness from fractional canvas transforms.
+    const desired = Math.max(1, 2 * (window?.devicePixelRatio || 1) * scale);
     const pixels = this.plugin.isMobileApp() ? 6 * 1024 * 1024 : 12 * 1024 * 1024;
     return Math.min(desired, Math.sqrt(pixels / (viewport.width * viewport.height)),
       8192 / viewport.width, 8192 / viewport.height);
@@ -5863,9 +5869,13 @@ class PaperResearchWorkspaceView extends ItemView {
     return page;
   }
 
+  workspacePdfGestureIsActive() {
+    return Boolean(this.excerptDrag || this.inkDrawingCleanup || this.aiRegionCleanup
+      || this.pdfHighlightGestureCleanup || this.pdfSelectionGestureCleanup);
+  }
+
   workspacePdfPageIsSelected(element) {
-    if (this.excerptDrag || this.inkDrawingCleanup || this.aiRegionCleanup
-      || this.pdfHighlightGestureCleanup || this.pdfSelectionGestureCleanup) return true;
+    if (this.workspacePdfGestureIsActive()) return true;
     const selection = element.ownerDocument?.defaultView?.getSelection?.();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
     try { return selection.getRangeAt(0).intersectsNode(element); } catch (_) { return false; }
@@ -5919,8 +5929,8 @@ class PaperResearchWorkspaceView extends ItemView {
     if (!record || record.failed || !this.pdfHost?.isConnected) return Promise.resolve(null);
     if (record.promise) return record.promise;
     const data = record.pageData;
-    if (data && this.workspacePdfPageIsSelected(record.element)) return Promise.resolve(data);
-    const ratio = data && this.workspacePdfRenderRatio(data.viewport);
+    if (data && this.workspacePdfGestureIsActive()) return Promise.resolve(data);
+    const ratio = data && this.workspacePdfRenderRatio(data.viewport, record.element);
     if (data && ratio <= data.ratio + 0.1 && ratio >= data.ratio * 0.65) return Promise.resolve(data);
     const token = this.pdfRenderToken;
     record.promise = new Promise((resolve) => {
@@ -5979,14 +5989,14 @@ class PaperResearchWorkspaceView extends ItemView {
   refreshWorkspacePdfResolution() {
     this.updateWorkspacePdfVisibility();
     for (const record of this.pdfCache?.pageViews?.values?.() || []) {
-      if (record.near && !this.workspacePdfPageIsSelected(record.element)) void this.ensureWorkspacePdfPage(record.pageNumber);
+      if (record.near) void this.ensureWorkspacePdfPage(record.pageNumber);
     }
   }
 
-  async renderWorkspacePdfBitmap(data, token) {
+  async renderWorkspacePdfBitmap(data, token, pageElement) {
     if (token !== this.pdfRenderToken) return null;
     const owner = this.pdfHost?.ownerDocument || globalThis.document;
-    const ratio = this.workspacePdfRenderRatio(data.viewport);
+    const ratio = this.workspacePdfRenderRatio(data.viewport, pageElement);
     const canvas = owner.createElement("canvas");
     canvas.width = Math.ceil(data.viewport.width * ratio);
     canvas.height = Math.ceil(data.viewport.height * ratio);
@@ -6537,7 +6547,7 @@ class PaperResearchWorkspaceView extends ItemView {
     if (!record || !current()) return;
     let pageData = cache.pages.get(pageNumber);
     if (pageData && record.pageData) {
-      const canvas = await this.renderWorkspacePdfBitmap(pageData, token);
+      const canvas = await this.renderWorkspacePdfBitmap(pageData, token, record.element);
       if (!canvas || token !== this.pdfRenderToken || !record.element.isConnected) return;
       const previous = pageData.canvas;
       previous.replaceWith(canvas);
@@ -6559,7 +6569,7 @@ class PaperResearchWorkspaceView extends ItemView {
       cache.pages.set(pageNumber, pageData);
       cache.pageSizes.set(pageNumber, viewport);
     }
-    const bitmap = await this.renderWorkspacePdfBitmap(pageData, token);
+    const bitmap = await this.renderWorkspacePdfBitmap(pageData, token, record.element);
     if (!bitmap) return;
     pageData.canvas = bitmap;
     if (!current()) return;
