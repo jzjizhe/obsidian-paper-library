@@ -247,7 +247,11 @@ async function run() {
   assert.equal(tabletLeaf.state.type, "paper-library-view");
   assert.equal(revealedTabletLeaf, tabletLeaf);
 
-  const mainSource = ["main.js", "ui-utils.js"].map((f) => fs.readFileSync(path.join(__dirname, "..", "src", f), "utf8")).join("\n");
+  const readSrcTree = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    return entry.isDirectory() ? readSrcTree(full) : (entry.name.endsWith(".js") ? [full] : []);
+  });
+  const mainSource = readSrcTree(path.join(__dirname, "..", "src")).map((f) => fs.readFileSync(f, "utf8")).join("\n");
   const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
   assert.match(mainSource, /function itemViewContentRoot/);
   assert.doesNotMatch(mainSource, /this\.containerEl\.children\[1\]/);

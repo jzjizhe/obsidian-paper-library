@@ -1,7 +1,7 @@
 /* UI 辅助：图标封装（别名回退 + 文字符号兜底）、图标按钮、ItemView 根元素获取。
    依赖 Obsidian 的 DOM 扩展（createEl/createSpan）与 setIcon，不能在纯 Node 中运行。 */
 
-import { setIcon as obsidianSetIcon } from "obsidian";
+import { Platform, setIcon as obsidianSetIcon } from "obsidian";
 
 function itemViewContentRoot(view) {
   return view?.contentEl
@@ -95,5 +95,26 @@ function iconButton(parent, icon, label, onClick, className = "") {
 
 const STAR_FEEDBACK_DELAY = 220;
 
+function isPaperLibraryMobile() {
+  const bodyIsMobile = typeof document !== "undefined"
+    && document.body?.classList?.contains("is-mobile");
+  return Boolean(
+    Platform?.isMobile
+    || Platform?.isMobileApp
+    || bodyIsMobile
+  );
+}
+
+function highlighterCursor(color) {
+  const encoded = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+    <g transform="rotate(38 11 11)">
+      <path d="M7.5 2.5h7A1.5 1.5 0 0 1 16 4v10H6V4a1.5 1.5 0 0 1 1.5-1.5Z" fill="#f8fafb" stroke="#263842" stroke-width="1.15"/>
+      <path d="M6 13.5h10l-1.8 4H7.8l-1.8-4Z" fill="${color}" stroke="#263842" stroke-width="1.15" stroke-linejoin="round"/>
+      <path d="M8 18.5h6" stroke="${color}" stroke-width="2" stroke-linecap="round"/>
+    </g>
+  </svg>`);
+  return `url("data:image/svg+xml,${encoded}") 6 18`;
+}
+
 /* PAPERLIB_ICON_ALIASES、PAPERLIB_ICON_SYMBOLS 是 setPaperlibIcon 的内部表，不导出。 */
-export { STAR_FEEDBACK_DELAY, iconButton, itemViewContentRoot, setPaperlibIcon };
+export { STAR_FEEDBACK_DELAY, highlighterCursor, iconButton, isPaperLibraryMobile, itemViewContentRoot, setPaperlibIcon };

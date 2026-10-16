@@ -37,6 +37,7 @@
 
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
+| 12a | `constants.js`（前置） | 视图/表格/外观/Composer 共享常量；`isPaperLibraryMobile`、`highlighterCursor` 入 ui-utils；`bytesContainAscii` 入 binary-utils；`TITLE_MATCH_THRESHOLD` 入 metadata-match | ✅ 已拆分 |
 | 12 | `views/research-workspace.js` | `PaperResearchWorkspaceView` 研究画布（约 2,600 行） | ⬜ 未拆分 |
 | 13 | `views/library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ⬜ 未拆分 |
 | 14 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ⬜ 未拆分 |
@@ -102,3 +103,9 @@
 ### ✅ 11. modals/（6 个文件，17 个弹窗类）
 
 按域分组：`paper-form.js`（论文表单/标签）、`delete.js`（6 个删除确认）、`pipeline.js`（图片识别与本地管线）、`figures.js`（图片画廊/轮播）、`citation.js`（CSL 导入/样式编辑）、`misc.js`（会议关注/原生批注）。每个文件显式声明自己需要的 obsidian API 与工具模块——`citation.js` 依赖 citation-engine，直观体现了模块分层。所有类逐字节搬运验证通过。
+
+### ✅ 12a. constants.js（阶段三前置）
+
+209 行。视图层与插件主类共享的常量全部归位：视图类型标识、`CANVAS_HIGHLIGHT_COLORS`、`PAPER_TABLE_*`、`FAVORITE_COLORS`、`PAPER_COMPOSER_*`、`DEFAULT_SETTINGS`。`DEFAULT_SETTINGS` 引用了 appearance 模块的 `APPEARANCE_PROTOCOL_VERSION`（第一轮遗漏，测试捕获后补上 import）。同时把几个散落的工具归位到语义正确的模块：`isPaperLibraryMobile`/`highlighterCursor` → ui-utils，`bytesContainAscii` → binary-utils，`TITLE_MATCH_THRESHOLD` → metadata-match。
+
+测试基建同步改造：`claudian-integration`/`pdf-ai-modes`/`mobile` 三个"源码约定"测试从读单个文件改为拼接整个 `src/**/*.js`，后续拆分不再需要逐个文件改测试。

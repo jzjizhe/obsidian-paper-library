@@ -98,5 +98,16 @@ function base64ToArrayBuffer(value) {
   return bytes.buffer;
 }
 
+function bytesContainAscii(bytes, value) {
+  const pattern = new TextEncoder().encode(value);
+  outer: for (let index = 0; index <= bytes.length - pattern.length; index += 1) {
+    for (let offset = 0; offset < pattern.length; offset += 1) {
+      if (bytes[index + offset] !== pattern[offset]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
 /* concatBytes、littleEndian、crc32 是 createStoredZip 的内部构件，不导出。 */
-export { arrayBufferToBase64, arrayBufferToDataUrl, base64ToArrayBuffer, createStoredZip };
+export { arrayBufferToBase64, arrayBufferToDataUrl, base64ToArrayBuffer, bytesContainAscii, createStoredZip };

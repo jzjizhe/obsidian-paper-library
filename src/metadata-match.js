@@ -1,6 +1,8 @@
 /* 元数据匹配：标题/作者相似度（Dice 系数 + CJK 处理）、Crossref venue 提取、
    发表类型推断、DOI/arXiv 归一化。纯函数，不依赖 Obsidian。 */
 
+const TITLE_MATCH_THRESHOLD = 0.86;
+
 import { stripMarkup } from "./text-utils.js";
 import { isLikelyChinesePersonalName } from "./citation-engine.js";
 import { findVenueRankingRule, isRepositoryVenue } from "./venue-rankings.js";
@@ -208,6 +210,7 @@ function fileNameToTitle(fileName) {
 /* compactTitleForCharacterMatch、sequenceDice、sequenceOrderScore 是
    titleSimilarity 的内部构件，不导出。 */
 export {
+  TITLE_MATCH_THRESHOLD,
   authorListSimilarity,
   chooseMetadataAuthors,
   crossrefVenue,
