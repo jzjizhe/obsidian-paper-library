@@ -19,7 +19,7 @@
 | 1 | `citation-engine.js` | 引文模板引擎：CSL 解析、模板渲染、作者格式化 | ✅ 已拆分 |
 | 2 | `venue-rankings.js` | CCF/CORE/TH-CPL 排名规则表、数据源地址、venue 推断 | ✅ 已拆分 |
 | 3 | `text-utils.js` | `decodeEntities`、`stripMarkup` 共享文本工具 | ✅ 已拆分 |
-| 4 | `update-checker.js` | 版本比较、Release 资源选择、zip 条目安全检查 | ⬜ 未拆分 |
+| 4 | `update-checker.js` | 版本比较、Release 资源选择、zip 条目安全检查 | ✅ 已拆分 |
 | 5 | `demo-data.js` | `SAMPLE_PAPERS` 示例论文与 DEMO_* 派生集合 | ⬜ 未拆分 |
 | 6 | `appearance.js` | 外观预设 `LIBRARY_APPEARANCES` 与归一化函数 | ⬜ 未拆分 |
 | 7 | `binary-utils.js` | zip 构造（crc32/createStoredZip）、base64/DataURL 转换 | ⬜ 未拆分 |
@@ -63,3 +63,7 @@
 ### ✅ 3. text-utils.js（commit `34e4082`）
 
 18 行。`stripMarkup` 在 main.js 有 63 处调用，是第一个共享工具模块，确立了"上层可依赖工具层、工具层不反向依赖"的方向。
+
+### ✅ 4. update-checker.js
+
+63 行。版本号比较、Release 资源选择、zip 路径穿越检查，纯逻辑零依赖。`PAPER_LIBRARY_UPDATE_FILES` 仅内部使用故不导出。`update.test.js` 通过 `updateInternals` 静态属性间接覆盖，逐字节搬运验证通过。
