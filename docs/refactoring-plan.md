@@ -39,7 +39,7 @@
 |---|------|------|------|
 | 12a | `constants.js`（前置） | 视图/表格/外观/Composer 共享常量；`isPaperLibraryMobile`、`highlighterCursor` 入 ui-utils；`bytesContainAscii` 入 binary-utils；`TITLE_MATCH_THRESHOLD` 入 metadata-match | ✅ 已拆分 |
 | 12 | `research-workspace-view.js` | `PaperResearchWorkspaceView` 研究画布（约 2,600 行） | ✅ 已拆分 |
-| 13 | `views/library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ⬜ 未拆分 |
+| 13 | `library-view.js` | `PaperLibraryView` 主视图及 Navigation/Detail 子类 | ✅ 已拆分 |
 | 14 | `settings.js` | `PaperLibrarySettingTab` 设置页（约 730 行） | ✅ 已拆分 |
 
 ## 阶段四：插件主类瘦身（约 13,500 行，风险最高，最后做）
@@ -117,3 +117,7 @@
 ### ✅ 12. research-workspace-view.js
 
 2,657 行。研究画布整体搬走：PDF 懒渲染、文字层选择、荧光笔/画笔/AI 圈选、画布节点与连线。对插件的交互全部通过构造注入的 `plugin`，无需任何改动。`pdf-loading.test.js` 通过 eval 打包产物引用 `PaperResearchWorkspaceView` 顶层类名，验证了 esbuild 会把模块类提升到产物顶层作用域。逐字节搬运验证通过。
+
+### ✅ 13. library-view.js
+
+3,144 行。主视图 + Navigation/Detail 两个子类一起搬（继承链同模块）。至此阶段三完成：main.js 只剩 PDF 头部工具函数（等 #16 带走）和插件主类。
