@@ -31,7 +31,7 @@
 |---|------|------|------|
 | 9 | `ui-utils.js` | `setPaperlibIcon`、`iconButton`、`itemViewContentRoot`、图标别名表 | ✅ 已拆分 |
 | 10 | `paper-utils.js` / `collection-utils.js` / `text-utils.js` 扩充 | 为 modals 拆分准备的共享工具层：id 生成、文件名、标签、DOI/arXiv、收藏夹路径、通用格式化 | ✅ 已拆分 |
-| 11 | `modals/` | 15 个弹窗按域分组：删除确认、本地管线、引文样式、图片浏览 | ⬜ 未拆分 |
+| 11 | `modals/` | 17 个弹窗按域分组：删除确认、本地管线、引文样式、图片浏览 | ✅ 已拆分 |
 
 ## 阶段三：视图层
 
@@ -98,3 +98,7 @@
 ### ✅ 10. paper-utils.js / collection-utils.js / text-utils.js 扩充
 
 121 + 45 + 37 行。拆 modals 的前置：弹窗依赖的 `uniqueId`、`normalizePaperTags`、`expandCollectionPaths` 等 helper 原本都在 main.js 顶层，直接拆弹窗会形成 modals → main.js 的反向依赖。先把它们沉淀为共享工具层：`paper-utils`（id/文件名/标签/DOI/arXiv）、`collection-utils`（收藏夹路径，依赖 paper-utils 的 `safeFileName`）、text-utils 扩充（`truncate`/`markdownText`/`formatAIFileSize`/`formatAIRemainingTime`）。每段逐字节验证通过。
+
+### ✅ 11. modals/（6 个文件，17 个弹窗类）
+
+按域分组：`paper-form.js`（论文表单/标签）、`delete.js`（6 个删除确认）、`pipeline.js`（图片识别与本地管线）、`figures.js`（图片画廊/轮播）、`citation.js`（CSL 导入/样式编辑）、`misc.js`（会议关注/原生批注）。每个文件显式声明自己需要的 obsidian API 与工具模块——`citation.js` 依赖 citation-engine，直观体现了模块分层。所有类逐字节搬运验证通过。
