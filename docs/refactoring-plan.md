@@ -23,7 +23,7 @@
 | 5 | `demo-data.js` | `SAMPLE_PAPERS` 示例论文与 DEMO_* 派生集合 | ✅ 已拆分 |
 | 6 | `appearance.js` | 外观预设 `LIBRARY_APPEARANCES` 与归一化函数 | ✅ 已拆分 |
 | 7 | `binary-utils.js` | zip 构造（crc32/createStoredZip）、base64/DataURL 转换 | ✅ 已拆分 |
-| 8 | `metadata-match.js` | 标题/作者相似度匹配、DOI/arXiv 归一化、发表类型推断 | ⬜ 未拆分 |
+| 8 | `metadata-match.js` | 标题/作者相似度匹配、DOI/arXiv 归一化、发表类型推断 | ✅ 已拆分 |
 
 ## 阶段二：UI 辅助与弹窗
 
@@ -79,3 +79,11 @@
 ### ✅ 7. binary-utils.js
 
 96 行。无压缩 zip 构造（`createStoredZip`，带 CRC32，自更新安装包用）和 base64/DataURL 转换。`concatBytes`/`littleEndian`/`crc32` 是内部构件不导出。逐字节搬运验证通过；Node 直接 import 验证 zip 魔数（PK）与 base64 往返正确。
+
+### ✅ 8. metadata-match.js
+
+199 行。标题/作者相似度（Dice 系数 + CJK 处理）、Crossref venue 提取、发表类型推断、文件名转标题等。这是第一个**跨模块依赖**的示范：import 了 text-utils（`stripMarkup`）、citation-engine（`isLikelyChinesePersonalName`）、venue-rankings（`findVenueRankingRule`、`isRepositoryVenue`），验证了单向依赖分层可行。逐字节搬运验证通过。
+
+## 阶段一完成
+
+至此阶段一（纯逻辑与数据模块）全部完成，main.js 头部约 1,150 行的工具区收缩约 780 行。剩余区域为 UI 辅助、视图类与插件主类，进入阶段二。
