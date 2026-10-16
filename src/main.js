@@ -78,6 +78,7 @@ import {
   splitMetadataAuthors,
   titleSimilarity
 } from "./metadata-match.js";
+import { STAR_FEEDBACK_DELAY, iconButton, itemViewContentRoot, setPaperlibIcon } from "./ui-utils.js";
 import { decodeEntities, stripMarkup } from "./text-utils.js";
 import {
   CCFDDL_ACCEPTANCE_BASE_URL,
@@ -120,14 +121,6 @@ function isPaperLibraryMobile() {
     || Platform?.isMobileApp
     || bodyIsMobile
   );
-}
-
-function itemViewContentRoot(view) {
-  return view?.contentEl
-    || view?.containerEl?.querySelector?.(":scope > .view-content")
-    || view?.containerEl?.querySelector?.(".view-content")
-    || view?.containerEl?.children?.[1]
-    || null;
 }
 
 function pdfMatrixPoint(matrix, x, y) {
@@ -405,91 +398,6 @@ const DEFAULT_SETTINGS = {
   paperComposerPdfMessageCards: {},
   paperComposerDirectContextBindings: {}
 };
-
-const obsidianSetIcon = setIcon;
-const PAPERLIB_ICON_ALIASES = {
-  "bar-chart-2": ["bar-chart"],
-  "book-open-check": ["book-open", "book"],
-  "calendar-days": ["calendar"],
-  "chart-no-axes-column-increasing": ["bar-chart-2", "bar-chart"],
-  "circle-alert": ["alert-circle"],
-  "circle-plus": ["plus-circle", "plus"],
-  "database-zap": ["database", "alert-circle"],
-  "file-check-2": ["file-check", "check"],
-  "file-plus-2": ["file-plus", "plus-square", "plus"],
-  "file-warning": ["file", "alert-triangle"],
-  files: ["copy", "file-text"],
-  folders: ["folder", "library"],
-  highlighter: ["edit-3", "pencil"],
-  "image-off": ["image", "file-x"],
-  images: ["image", "layout-grid"],
-  library: ["book-open", "folder"],
-  "list-plus": ["list", "plus"],
-  "loader-circle": ["loader"],
-  "message-square-text": ["message-square", "edit-3"],
-  "messages-square": ["message-square", "message-circle"],
-  network: ["share-2", "git-branch"],
-  "mouse-pointer-2": ["mouse-pointer"],
-  "mouse-pointer-click": ["mouse-pointer"],
-  "move-right": ["arrow-right"],
-  "notebook-pen": ["edit-3", "pencil", "file-text"],
-  orbit: ["circle", "move"],
-  "paper-composer": ["sparkles", "file-text"],
-  palette: ["paintbrush", "edit-3", "settings"],
-  "panel-left-open": ["panel-left", "sidebar", "menu"],
-  "panels-top-left": ["layout", "grid"],
-  "search-x": ["search", "x"],
-  scan: ["focus", "maximize-2"],
-  sparkles: ["star", "wand-2"],
-  "square-pen": ["edit-3", "pencil"],
-  "sticky-note": ["file-text"],
-  "text-quote": ["quote", "file-text"],
-  waypoints: ["share-2", "git-branch", "link-2"]
-};
-
-const PAPERLIB_ICON_SYMBOLS = {
-  "bar-chart-2": "▥", "chart-no-axes-column-increasing": "▥",
-  "arrow-up": "↑", check: "✓", circle: "○",
-  "chevron-down": "⌄", "chevron-left": "‹", "chevron-right": "›", "chevron-up": "⌃",
-  "circle-alert": "!", "circle-plus": "+", "cloud-off": "☁", copy: "⧉", download: "↓",
-  "database-zap": "!", "edit-3": "✎", "external-link": "↗", "file-down": "⇩", "file-plus-2": "+",
-  "file-question": "?", "file-text": "▤", "file-warning": "!", files: "▤", flag: "⚑",
-  folder: "▱", "folder-plus": "+", folders: "▱", highlighter: "✎", "image-off": "▧", images: "▧",
-  info: "ⓘ", "layout-grid": "▦", "layout-template": "▦", "link-2": "↗",
-  "list-plus": "+", "loader-circle": "◌", "maximize-2": "↗", "message-square-text": "□", "messages-square": "□",
-  minus: "−", "mouse-pointer-2": "↖", "mouse-pointer-click": "↖", "move-right": "→",
-  "notebook-pen": "✎", orbit: "◎", "panel-left-open": "☰", "paper-composer": "✦", paperclip: "⌕", pencil: "✎", scan: "⌗", sparkles: "✦",
-  plus: "+", "refresh-cw": "↻", search: "⌕", "search-x": "⌕", star: "☆", "sticky-note": "▤",
-  tags: "◇", "text-quote": "❞", "trash-2": "⌫", upload: "⇧", waypoints: "⌘", x: "×"
-};
-
-function setPaperlibIcon(element, icon) {
-  if (!element) return false;
-  const candidates = [icon, ...(PAPERLIB_ICON_ALIASES[icon] || [])].filter(Boolean);
-  for (const candidate of candidates) {
-    element.querySelectorAll?.(":scope > svg, :scope > .paperlib-icon-fallback")?.forEach((node) => node.remove());
-    try { obsidianSetIcon(element, candidate); } catch (_) {}
-    if (element.querySelector?.("svg")) return true;
-  }
-  element.querySelectorAll?.(":scope > svg, :scope > .paperlib-icon-fallback")?.forEach((node) => node.remove());
-  element.createSpan?.({
-    cls: "paperlib-icon-fallback",
-    text: PAPERLIB_ICON_SYMBOLS[icon] || "•"
-  });
-  return false;
-}
-
-function iconButton(parent, icon, label, onClick, className = "") {
-  const button = parent.createEl("button", {
-    cls: `paperlib-icon-button ${className}`.trim(),
-    attr: { "aria-label": label, title: label }
-  });
-  setPaperlibIcon(button, icon);
-  button.addEventListener("click", onClick);
-  return button;
-}
-
-const STAR_FEEDBACK_DELAY = 220;
 
 function uniqueId() {
   return `paper-${Date.now()}-${Math.random().toString(16).slice(2)}`;

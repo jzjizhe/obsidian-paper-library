@@ -29,7 +29,7 @@
 
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
-| 9 | `ui-utils.js` | `setPaperlibIcon`、`iconButton`、`itemViewContentRoot`、图标别名表 | ⬜ 未拆分 |
+| 9 | `ui-utils.js` | `setPaperlibIcon`、`iconButton`、`itemViewContentRoot`、图标别名表 | ✅ 已拆分 |
 | 10 | `modals/` | 15 个弹窗按域分组：删除确认、本地管线、引文样式、图片浏览 | ⬜ 未拆分 |
 
 ## 阶段三：视图层
@@ -87,3 +87,9 @@
 ## 阶段一完成
 
 至此阶段一（纯逻辑与数据模块）全部完成，main.js 头部约 1,150 行的工具区收缩约 780 行。剩余区域为 UI 辅助、视图类与插件主类，进入阶段二。
+
+### ✅ 9. ui-utils.js
+
+86 行。`setPaperlibIcon`（89 处调用）、`iconButton`（54 处）、`itemViewContentRoot`（8 处）及图标别名/符号兜底表。模块改为直接 `import { setIcon } from "obsidian"`，删掉了原来的 `obsidianSetIcon` 别名中转。阶段二开始模块依赖 Obsidian，验证方式改为打包产物 + 测试套件。
+
+附带发现并处理：`claudian-integration`/`mobile` 两个测试的源码断言因代码搬走而失败，已改为同时读 `src/ui-utils.js`。另外确认 `highlight`/`mobile`/`semantic-scholar` 三个测试（不在 npm test 链中）在重构前的基线 commit 上就以相同方式失败，属历史遗留，与本次拆分无关。

@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
+const main = ["main.js", "ui-utils.js"].map((f) => fs.readFileSync(path.join(root, "src", f), "utf8")).join("\n");
 const bundle = fs.readFileSync(path.join(root, "vendor", "claudian.bundle.js"), "utf8");
 const cliProviders = fs.readFileSync(path.join(root, "vendor", "paper-composer-cli-providers.cjs"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
