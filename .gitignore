@@ -9,3 +9,5 @@ pipeline-runtime/
 pipeline-cache/
 *.zip
 node_modules/
+# 打包产物：由 esbuild 从 src/ 生成（npm run dev / build / test 都会先构建）
+main.js
