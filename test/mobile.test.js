@@ -247,7 +247,7 @@ async function run() {
   assert.equal(tabletLeaf.state.type, "paper-library-view");
   assert.equal(revealedTabletLeaf, tabletLeaf);
 
-  const mainSource = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+  const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
   const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
   assert.match(mainSource, /function itemViewContentRoot/);
   assert.doesNotMatch(mainSource, /this\.containerEl\.children\[1\]/);

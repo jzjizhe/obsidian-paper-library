@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
+const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "pipeline", "models.json"), "utf8"));
 const worker = fs.readFileSync(path.join(root, "pipeline", "worker.cjs"), "utf8");
