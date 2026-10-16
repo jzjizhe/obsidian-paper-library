@@ -20,7 +20,7 @@
 | 2 | `venue-rankings.js` | CCF/CORE/TH-CPL 排名规则表、数据源地址、venue 推断 | ✅ 已拆分 |
 | 3 | `text-utils.js` | `decodeEntities`、`stripMarkup` 共享文本工具 | ✅ 已拆分 |
 | 4 | `update-checker.js` | 版本比较、Release 资源选择、zip 条目安全检查 | ✅ 已拆分 |
-| 5 | `demo-data.js` | `SAMPLE_PAPERS` 示例论文与 DEMO_* 派生集合 | ⬜ 未拆分 |
+| 5 | `demo-data.js` | `SAMPLE_PAPERS` 示例论文与 DEMO_* 派生集合 | ✅ 已拆分 |
 | 6 | `appearance.js` | 外观预设 `LIBRARY_APPEARANCES` 与归一化函数 | ⬜ 未拆分 |
 | 7 | `binary-utils.js` | zip 构造（crc32/createStoredZip）、base64/DataURL 转换 | ⬜ 未拆分 |
 | 8 | `metadata-match.js` | 标题/作者相似度匹配、DOI/arXiv 归一化、发表类型推断 | ⬜ 未拆分 |
@@ -67,3 +67,7 @@
 ### ✅ 4. update-checker.js
 
 63 行。版本号比较、Release 资源选择、zip 路径穿越检查，纯逻辑零依赖。`PAPER_LIBRARY_UPDATE_FILES` 仅内部使用故不导出。`update.test.js` 通过 `updateInternals` 静态属性间接覆盖，逐字节搬运验证通过。
+
+### ✅ 5. demo-data.js
+
+161 行。`SAMPLE_PAPERS` 示例论文及 `DEMO_PAPER_IDS/TAGS/COLLECTIONS` 派生集合，纯数据零依赖。示例数据占了原文件一大块，搬出后入口文件的可读性明显改善。逐字节搬运验证通过。
