@@ -345,6 +345,7 @@ class PaperLibraryPlugin extends Plugin {
     this.paperReadingPositionTimer = null;
     this.nativeHighlightTooltip = null;
     this.nativeHighlightHoverTimer = null;
+    this.nativePdfPositionSuppressUntil = 0;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -7195,6 +7196,8 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   recordPdfReadingPosition(paper, page) {
+    // 打开时的定位/钉回顶部属于程序性滚动，抑制记录，避免覆盖真实阅读位置
+    if (Date.now() < this.nativePdfPositionSuppressUntil) return;
     const id = paper?.id;
     const value = Math.max(1, Number(page) || 0);
     if (!id || !value) return;
@@ -7230,10 +7233,49 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async restoreNativePdfReadingPosition(file, paper) {
-    if (this.settings.pdfOpenPosition === "first") return;
+    if (!file?.path) return;
+    if (this.settings.pdfOpenPosition === "first") {
+      await this.pinNativePdfToFirstPage(file);
+      return;
+    }
     const target = Math.max(1, Number(paper?.readingPosition?.page) || 0);
-    if (!file?.path || target <= 1) return;
+    if (target <= 1) return;
     await this.scrollNativePdfToPage(file, target);
+  }
+
+  findNativePdfPageElement(file, page) {
+    const leaves = this.app.workspace.getLeavesOfType?.("pdf")?.filter((leaf) => leaf.view?.file?.path === file?.path) || [];
+    const active = this.app.workspace.activeLeaf;
+    const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+    return leaf?.view?.containerEl?.querySelector?.(`.page[data-page-number="${page}"]`) || null;
+  }
+
+  findNativePdfScroller(pageEl) {
+    for (let element = pageEl?.parentElement; element; element = element.parentElement) {
+      try {
+        const style = element.ownerDocument?.defaultView?.getComputedStyle?.(element);
+        if (style && /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight) return element;
+      } catch (error) { /* 忽略跨文档样式查询失败 */ }
+    }
+    return pageEl?.parentElement || null;
+  }
+
+  async pinNativePdfToFirstPage(file) {
+    // Obsidian 会恢复文件上次的滚动位置，且恢复时机可能晚于 openFile：
+    // 前 800ms 内发现偏离顶部就纠正；约 800ms 后若已在顶部则结束，不再干预用户操作
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const pageEl = this.findNativePdfPageElement(file, 1);
+      if (pageEl) {
+        const scroller = this.findNativePdfScroller(pageEl);
+        const pageTop = pageEl.getBoundingClientRect?.().top ?? 0;
+        const scrollerTop = scroller?.getBoundingClientRect?.().top ?? 0;
+        const atTop = pageTop <= scrollerTop + 48;
+        if (atTop && attempt >= 5) return true;
+        if (!atTop && attempt <= 4) pageEl.scrollIntoView?.({ block: "start" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    }
+    return false;
   }
 
   async scrollNativePdfToPage(file, page) {
@@ -13084,6 +13126,7 @@ class PaperLibraryPlugin extends Plugin {
     const openNative = options.native ?? (this.settings.pdfOpenMode !== "canvas");
     if (openNative) {
       await this.app.workspace.getLeaf("tab").openFile(file);
+      this.nativePdfPositionSuppressUntil = Date.now() + 2500;
       void this.restoreNativePdfReadingPosition(file, paper);
       if (!this.settings.pdfAnnotationHintShown) {
         new Notice("使用 Paper Library 浮动工具栏可高亮或添加注释；批注会同步到论文笔记");
