@@ -14672,6 +14672,8 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   display: none;
   justify-content: center;
   min-height: 120px;
+  padding-left: 0;
+  border-left: 0;
 }
 
 /* 选择器要压过 Obsidian 自带的 input[type='range'] 宽度/高度规则 */
@@ -14729,6 +14731,7 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 }
 
 .paperlib-native-pdf-width-value {
+  width: 20px;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1;
