@@ -7261,21 +7261,37 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async pinNativePdfToFirstPage(file) {
-    // Obsidian 会恢复文件上次的滚动位置，且恢复时机可能晚于 openFile：
-    // 前 800ms 内发现偏离顶部就纠正；约 800ms 后若已在顶部则结束，不再干预用户操作
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const pageEl = this.findNativePdfPageElement(file, 1);
-      if (pageEl) {
-        const scroller = this.findNativePdfScroller(pageEl);
-        const pageTop = pageEl.getBoundingClientRect?.().top ?? 0;
-        const scrollerTop = scroller?.getBoundingClientRect?.().top ?? 0;
-        const atTop = pageTop <= scrollerTop + 48;
-        if (atTop && attempt >= 5) return true;
-        if (!atTop && attempt <= 4) pageEl.scrollIntoView?.({ block: "start" });
+    // Obsidian 会恢复文件上次的滚动位置，且恢复时机可能晚于 openFile（大 PDF 加载完成后才恢复）。
+    // 在约 5 秒内持续检查并纠正；检测到用户交互（点击/滚轮/按键）后立即停止，避免和用户抢滚动。
+    let interacting = false;
+    let boundContainer = null;
+    const markInteractive = () => { interacting = true; };
+    const bind = (container) => {
+      if (!container || container === boundContainer) return;
+      boundContainer = container;
+      container.addEventListener("pointerdown", markInteractive, true);
+      container.addEventListener("wheel", markInteractive, { capture: true, passive: true });
+      container.addEventListener("keydown", markInteractive, true);
+    };
+    try {
+      for (let attempt = 0; attempt < 25; attempt += 1) {
+        if (interacting) return false;
+        const pageEl = this.findNativePdfPageElement(file, 1);
+        if (pageEl) {
+          bind(pageEl.closest?.(".pdf-viewer, .pdf-container") || pageEl.parentElement);
+          const scroller = this.findNativePdfScroller(pageEl);
+          const pageTop = pageEl.getBoundingClientRect?.().top ?? 0;
+          const scrollerTop = scroller?.getBoundingClientRect?.().top ?? 0;
+          if (pageTop > scrollerTop + 48) pageEl.scrollIntoView?.({ block: "start" });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
       }
-      await new Promise((resolve) => setTimeout(resolve, 160));
+    } finally {
+      boundContainer?.removeEventListener?.("pointerdown", markInteractive, true);
+      boundContainer?.removeEventListener?.("wheel", markInteractive, { capture: true });
+      boundContainer?.removeEventListener?.("keydown", markInteractive, true);
     }
-    return false;
+    return true;
   }
 
   async scrollNativePdfToPage(file, page) {
