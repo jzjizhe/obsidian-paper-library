@@ -14703,6 +14703,8 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-widths .paperlib-native-pdf-width-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
+  position: relative;
+  top: 0;
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -14710,6 +14712,20 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   background: var(--interactive-accent);
   box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
   margin-left: -3px;
+}
+
+/* Obsidian 自带的 hover/active 会把滑块头放大成椭圆，这里固定成小圆点 */
+.paperlib-native-pdf-widths .paperlib-native-pdf-width-slider::-webkit-slider-thumb:hover,
+.paperlib-native-pdf-widths .paperlib-native-pdf-width-slider::-webkit-slider-thumb:active {
+  position: relative;
+  top: 0;
+  width: 11px;
+  height: 11px;
+  margin-left: -4px;
+  border: 2px solid var(--background-primary);
+  background: var(--interactive-accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+  opacity: 1;
 }
 
 .paperlib-native-pdf-width-value {
