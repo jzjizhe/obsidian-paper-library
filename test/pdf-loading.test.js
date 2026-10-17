@@ -1139,11 +1139,17 @@ async function run() {
         return { ok: true, arrayBuffer: async () => buildMinimalPdf() };
       };
       let written;
+      const backups = [];
       const mutationPlugin = createPlugin(async () => { throw denied; });
       mutationPlugin.pdfMutationQueues = new Map();
       mutationPlugin.app.vault.modifyBinary = async (value, output) => {
         assert.equal(value, file);
         written = output;
+      };
+      mutationPlugin.app.vault.adapter = {
+        exists: async () => false,
+        mkdir: async () => {},
+        writeBinary: async (target, data) => { backups.push({ target, size: data.byteLength }); }
       };
       mutationPlugin.settings.pdfAnnotations = [];
       try {
@@ -1151,8 +1157,12 @@ async function run() {
         assert.equal(changed, true);
         assert.equal(Buffer.from(written).subarray(0, 5).toString(), "%PDF-");
         assert.ok(Buffer.byteLength(written) > 100);
+        assert.equal(backups.length, 1, "the first mutation must back up the original PDF");
+        assert.match(backups[0].target, /pdf-backups\//);
+        assert.ok(backups[0].size > 100);
         const unchanged = await mutationPlugin.mutateLocalPdf(file.path, async () => false);
         assert.equal(unchanged, false, "a no-op mutation must not rewrite the file");
+        assert.equal(backups.length, 1, "a no-op mutation must not create another backup");
         const signed = Buffer.from("%PDF-1.4 fake /ByteRange [0 1 2 3]");
         mutationPlugin.app.vault.readBinary = async () => Uint8Array.from(signed).buffer;
         await assert.rejects(mutationPlugin.mutateLocalPdf(file.path, async () => true),

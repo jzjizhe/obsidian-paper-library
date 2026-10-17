@@ -6856,6 +6856,19 @@ class PaperLibraryPlugin extends Plugin {
         void this.flushPdfAnnotationSyncs((mark) => normalizePath(mark.pdfPath || "") !== activePath);
       }));
     }
+    // 切走应用/最小化时也把待写回批注落盘；onunload 里的异步写回无法等待，
+    // 这是退出 Obsidian 前最后一道兜底。
+    const flushPending = () => {
+      if (this.pendingPdfAnnotationSyncs?.size) void this.flushPdfAnnotationSyncs();
+    };
+    if (this.registerDomEvent && typeof window !== "undefined") {
+      this.registerDomEvent(window, "blur", flushPending);
+    }
+    if (this.registerDomEvent && typeof document !== "undefined") {
+      this.registerDomEvent(document, "visibilitychange", () => {
+        if (document.visibilityState === "hidden") flushPending();
+      });
+    }
     this.nativePdfToolbarObserver = new MutationObserver(mount);
     this.nativePdfToolbarObserver.observe(document.body, { childList: true, subtree: true });
     if (this.register) this.register(() => this.nativePdfToolbarObserver?.disconnect());
@@ -13435,6 +13448,35 @@ class PaperLibraryPlugin extends Plugin {
     return `D:${date.toISOString().replace(/[-:T]/g, "").slice(0, 14)}Z`;
   }
 
+  async backupLocalPdfBeforeMutation(file, sourceBytes) {
+    // 每个 PDF 在本次会话第一次写回前留一份原始副本，避免写回异常时无法回退
+    if (!file?.path || !sourceBytes) return false;
+    const path = normalizePath(file.path);
+    this.pdfBackupSessions = this.pdfBackupSessions || new Set();
+    if (this.pdfBackupSessions.has(path)) return false;
+    const adapter = this.app?.vault?.adapter;
+    if (!adapter?.writeBinary) return false;
+    try {
+      const directory = this.getPluginVaultPath("pdf-backups");
+      if (adapter.exists && !(await adapter.exists(directory))) {
+        await adapter.mkdir?.(directory);
+      }
+      let hash = 0;
+      for (let index = 0; index < path.length; index += 1) {
+        hash = ((hash << 5) - hash + path.charCodeAt(index)) | 0;
+      }
+      const base = String(file.basename || "document").replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "document";
+      const target = normalizePath(`${directory}/${base}-${Math.abs(hash).toString(36)}.pdf`);
+      const buffer = sourceBytes.buffer.slice(sourceBytes.byteOffset, sourceBytes.byteOffset + sourceBytes.byteLength);
+      await adapter.writeBinary(target, buffer);
+      this.pdfBackupSessions.add(path);
+      return true;
+    } catch (error) {
+      console.warn("Paper Library: failed to back up PDF before annotation writeback", error);
+      return false;
+    }
+  }
+
   async mutateLocalPdf(pdfPath, mutate) {
     const path = normalizePath(pdfPath || "");
     if (!path || /^https?:\/\//i.test(path) || !this.app.vault?.modifyBinary) return false;
@@ -13454,6 +13496,7 @@ class PaperLibraryPlugin extends Plugin {
       const bytes = await document.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
       if (bytes.length < 5 || String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") throw new Error("PDF 序列化失败");
       const output = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      await this.backupLocalPdfBeforeMutation(file, sourceBytes);
       await this.app.vault.modifyBinary(file, output);
       return true;
     });
@@ -13650,13 +13693,20 @@ class PaperLibraryPlugin extends Plugin {
       return;
     }
     entries.forEach(([key]) => this.pendingPdfAnnotationSyncs.delete(key));
+    this.pdfAnnotationSyncFailures = this.pdfAnnotationSyncFailures || new Set();
     let written = 0;
-    for (const [, mark] of entries) {
+    for (const [key, mark] of entries) {
       try {
         if (await this.upsertLocalPdfAnnotation(mark)) written += 1;
+        this.pdfAnnotationSyncFailures.delete(key);
       } catch (error) {
+        // 写入失败时保留队列项，下次离开视图/失焦时还能重试
+        this.pendingPdfAnnotationSyncs.set(key, mark);
         console.error("Paper Library: failed to write local PDF annotation", error);
-        new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
+        if (!this.pdfAnnotationSyncFailures.has(key)) {
+          this.pdfAnnotationSyncFailures.add(key);
+          new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
+        }
       }
     }
     const paths = new Set(entries.map(([, mark]) => normalizePath(mark.pdfPath || "")).filter(Boolean));
