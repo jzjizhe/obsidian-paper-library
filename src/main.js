@@ -8123,6 +8123,8 @@ class PaperLibraryPlugin extends Plugin {
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
+      // 正在编辑时不要重建卡片，否则 contenteditable 会被替换，焦点和输入都会丢失
+      if (pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer .paperlib-pdf-textbox-card.is-editing")) return;
       const dims = sizes?.get?.(pageNumber);
       const pageRect = pageEl.getBoundingClientRect?.();
       const scale = dims?.width && pageRect?.width ? pageRect.width / dims.width : 1;

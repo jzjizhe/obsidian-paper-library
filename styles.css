@@ -14884,7 +14884,8 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-textbox-layer {
   position: absolute;
-  z-index: 4;
+  /* 写回后的 FreeText 注释层可能盖在卡片上，卡片必须位于注释层之上才能接收点击 */
+  z-index: 10;
   inset: 0;
   overflow: visible;
   pointer-events: none;
