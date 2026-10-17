@@ -340,6 +340,8 @@ class PaperLibraryPlugin extends Plugin {
     this.pendingPdfAnnotationSyncs = new Map();
     this.nativePdfPageSizeCache = new Map();
     this.nativeSelectionToolbarCleanup = null;
+    this.paperReadingPositions = new Map();
+    this.paperReadingPositionTimer = null;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -562,13 +564,15 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
     this.nativePdfToolbarObserver?.disconnect();
-    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click }) => {
+    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);
       container.removeEventListener("contextmenu", contextMenu, true);
       container.removeEventListener("dragstart", dragStart, true);
       container.removeEventListener("click", click, true);
+      container.removeEventListener("scroll", scroll, true);
     });
+    this.persistPaperReadingPositions();
     this.nativePdfBindingList = [];
     document.querySelectorAll(".paperlib-native-pdf-tools").forEach((element) => element.remove());
     document.querySelectorAll(".paperlib-pdf-figure-drag-zone, .paperlib-pdf-figure-drag-preview")
@@ -6723,12 +6727,31 @@ class PaperLibraryPlugin extends Plugin {
         };
         const dragStart = (event) => this.handleNativePdfSelectionDrag(event, leaf, container);
         const click = (event) => this.handleNativePdfFigureClick(event, leaf, container);
+        // 滚动时记录阅读页码（防抖落盘），供下次打开恢复
+        const scroll = (event) => {
+          const file = leaf.view?.file;
+          const paper = this.getPaperForPdfFile(file);
+          if (!paper) return;
+          const scroller = event.target;
+          const bounds = scroller?.getBoundingClientRect?.();
+          if (!bounds) return;
+          const probe = bounds.top + 40;
+          let current = 0;
+          container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+            const rect = pageEl.getBoundingClientRect?.();
+            if (rect && rect.top <= probe) {
+              current = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number")) || current;
+            }
+          });
+          if (current) this.recordPdfReadingPosition(paper, current);
+        };
         container.addEventListener("pointerdown", pointerDown, true);
         container.addEventListener("pointerup", pointerUp, true);
         container.addEventListener("contextmenu", contextMenu, true);
         container.addEventListener("dragstart", dragStart, true);
         container.addEventListener("click", click, true);
-        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click };
+        container.addEventListener("scroll", scroll, true);
+        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll };
         this.nativePdfBindings.set(container, binding);
         this.nativePdfBindingList.push(binding);
       }
@@ -7101,6 +7124,59 @@ class PaperLibraryPlugin extends Plugin {
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
     });
+  }
+
+  recordPdfReadingPosition(paper, page) {
+    const id = paper?.id;
+    const value = Math.max(1, Number(page) || 0);
+    if (!id || !value) return;
+    this.paperReadingPositions.set(id, value);
+    if (this.paperReadingPositionTimer) clearTimeout(this.paperReadingPositionTimer);
+    this.paperReadingPositionTimer = setTimeout(() => {
+      this.paperReadingPositionTimer = null;
+      this.persistPaperReadingPositions();
+    }, 2000);
+  }
+
+  persistPaperReadingPositions() {
+    if (this.paperReadingPositionTimer) {
+      clearTimeout(this.paperReadingPositionTimer);
+      this.paperReadingPositionTimer = null;
+    }
+    if (!this.paperReadingPositions.size) return;
+    let changed = false;
+    for (const [paperId, page] of this.paperReadingPositions) {
+      const stored = this.settings.papers?.find((item) => item.id === paperId);
+      if (!stored) continue;
+      if (Number(stored.readingPosition?.page) !== page) {
+        stored.readingPosition = { page, updatedAt: new Date().toISOString() };
+        changed = true;
+      }
+    }
+    this.paperReadingPositions.clear();
+    if (changed) {
+      void this.saveSettings().catch((error) => (
+        console.warn("Paper Library: reading position save unavailable", error)
+      ));
+    }
+  }
+
+  async restoreNativePdfReadingPosition(file, paper) {
+    if (this.settings.pdfOpenPosition === "first") return;
+    const target = Math.max(1, Number(paper?.readingPosition?.page) || 0);
+    if (!file?.path || target <= 1) return;
+    // 原生视图是连续滚动 + 全页占位符：等占位符出现后定位，未渲染的远页也能滚到
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const leaves = this.app.workspace.getLeavesOfType?.("pdf")?.filter((leaf) => leaf.view?.file?.path === file.path) || [];
+      const active = this.app.workspace.activeLeaf;
+      const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+      const pageEl = leaf?.view?.containerEl?.querySelector?.(`.page[data-page-number="${target}"]`);
+      if (pageEl) {
+        pageEl.scrollIntoView?.({ block: "start" });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
   }
 
   beginNativePdfInkStroke(event, leaf, container, pageEl, state) {
@@ -12876,6 +12952,7 @@ class PaperLibraryPlugin extends Plugin {
     const openNative = options.native ?? (this.settings.pdfOpenMode !== "canvas");
     if (openNative) {
       await this.app.workspace.getLeaf("tab").openFile(file);
+      void this.restoreNativePdfReadingPosition(file, paper);
       if (!this.settings.pdfAnnotationHintShown) {
         new Notice("使用 Paper Library 浮动工具栏可高亮或添加注释；批注会同步到论文笔记");
         this.settings.pdfAnnotationHintShown = true;

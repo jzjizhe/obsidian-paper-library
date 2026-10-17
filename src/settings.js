@@ -749,6 +749,17 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
+      .setName("PDF 打开时的位置")
+      .setDesc("从论文库打开 PDF 时恢复上次阅读的页码，或总是从第一页开始。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("last", "上次浏览位置（推荐）")
+        .addOption("first", "从第一页开始")
+        .setValue(this.plugin.settings.pdfOpenPosition || "last")
+        .onChange(async (value) => {
+          this.plugin.settings.pdfOpenPosition = value;
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
       .setName("研究画布笔记标题")
       .setDesc("摘录卡片、想法与连接自动同步到论文笔记中的此标题下。")
       .addText((text) => text
