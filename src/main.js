@@ -7063,15 +7063,25 @@ class PaperLibraryPlugin extends Plugin {
         const color = CANVAS_HIGHLIGHT_COLORS.find((item) => (
           item.id === String(mark.color || "").toLocaleLowerCase()
         )) || CANVAS_HIGHLIGHT_COLORS[0];
-        mark.pdfRects.forEach((item) => {
-          const rect = item?.rect;
-          if (!Array.isArray(rect) || rect.length !== 4) return;
+        // 先规范化再合并：上下标（如 [5]、pass@k 的 k）产生的矩形与正文行矩形有重叠，
+        // multiply 混合下重叠处会叠两次颜色变深；画布侧的 mergePdfHighlightViewportRects 与坐标系无关，直接复用
+        const rects = mark.pdfRects
+          .map((item) => item?.rect)
+          .filter((rect) => Array.isArray(rect) && rect.length === 4)
+          .map((rect) => [
+            Math.min(rect[0], rect[2]),
+            Math.min(rect[1], rect[3]),
+            Math.max(rect[0], rect[2]),
+            Math.max(rect[1], rect[3])
+          ]);
+        const merged = this.mergePdfHighlightViewportRects(rects);
+        merged.forEach((rect) => {
           const element = document.createElement("div");
           element.className = "paperlib-native-pdf-highlight-rect";
-          element.style.left = `${Math.min(rect[0], rect[2]) / dims.width * 100}%`;
-          element.style.top = `${(1 - Math.max(rect[1], rect[3]) / dims.height) * 100}%`;
-          element.style.width = `${Math.abs(rect[2] - rect[0]) / dims.width * 100}%`;
-          element.style.height = `${Math.abs(rect[3] - rect[1]) / dims.height * 100}%`;
+          element.style.left = `${rect[0] / dims.width * 100}%`;
+          element.style.top = `${(1 - rect[3] / dims.height) * 100}%`;
+          element.style.width = `${(rect[2] - rect[0]) / dims.width * 100}%`;
+          element.style.height = `${(rect[3] - rect[1]) / dims.height * 100}%`;
           element.style.background = color.value;
           layer.appendChild(element);
         });
