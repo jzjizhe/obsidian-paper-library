@@ -128,6 +128,7 @@ import {
   safeCollectionPath
 } from "./collection-utils.js";
 import { CslImportModal, CitationStyleModal } from "./modals/citation.js";
+import { PdfAnnotationsModal } from "./modals/annotations.js";
 import {
   DeleteCollectionModal,
   DeleteFigureRecognitionRuntimeModal,
@@ -342,6 +343,8 @@ class PaperLibraryPlugin extends Plugin {
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
+    this.nativeHighlightTooltip = null;
+    this.nativeHighlightHoverTimer = null;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -564,14 +567,17 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
     this.nativePdfToolbarObserver?.disconnect();
-    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll }) => {
+    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, hoverMove, hoverLeave }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);
       container.removeEventListener("contextmenu", contextMenu, true);
       container.removeEventListener("dragstart", dragStart, true);
       container.removeEventListener("click", click, true);
       container.removeEventListener("scroll", scroll, true);
+      container.removeEventListener("pointermove", hoverMove, true);
+      container.removeEventListener("pointerleave", hoverLeave);
     });
+    this.hideNativePdfHighlightTooltip();
     this.persistPaperReadingPositions();
     this.nativePdfBindingList = [];
     document.querySelectorAll(".paperlib-native-pdf-tools").forEach((element) => element.remove());
@@ -6534,7 +6540,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: "yellow", inkColor: "yellow", paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6559,7 +6565,7 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: "yellow", inkColor: "yellow", paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
@@ -6627,6 +6633,21 @@ class PaperLibraryPlugin extends Plugin {
       askRegion.setAttribute("aria-label", "圈选区域 Ask AI");
       setPaperlibIcon(askRegion, "scan");
       group.appendChild(askRegion);
+      const annotations = document.createElement("button");
+      annotations.className = "clickable-icon paperlib-native-pdf-tool is-annotations";
+      annotations.title = "查看本文所有标注";
+      annotations.setAttribute("aria-label", "查看标注列表");
+      setPaperlibIcon(annotations, "notebook-pen");
+      group.appendChild(annotations);
+      annotations.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const file = leaf.view?.file || this.app.workspace.getActiveFile();
+        if (!file) return new Notice("当前没有打开 PDF");
+        const paper = this.getPaperForPdfFile(file);
+        if (!paper) return new Notice("请先把这个文档加入论文库");
+        new PdfAnnotationsModal(this.app, this, paper, file.path).open();
+      });
       const figures = document.createElement("button");
       figures.className = "clickable-icon paperlib-native-pdf-tool is-figures";
       figures.title = "浏览 PDF 中的所有图片";
@@ -6744,14 +6765,19 @@ class PaperLibraryPlugin extends Plugin {
             }
           });
           if (current) this.recordPdfReadingPosition(paper, current);
+          this.hideNativePdfHighlightTooltip();
         };
+        const hoverMove = (event) => this.handleNativePdfHighlightHover(event, leaf, container);
+        const hoverLeave = () => this.hideNativePdfHighlightTooltip();
         container.addEventListener("pointerdown", pointerDown, true);
         container.addEventListener("pointerup", pointerUp, true);
         container.addEventListener("contextmenu", contextMenu, true);
         container.addEventListener("dragstart", dragStart, true);
         container.addEventListener("click", click, true);
         container.addEventListener("scroll", scroll, true);
-        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll };
+        container.addEventListener("pointermove", hoverMove, true);
+        container.addEventListener("pointerleave", hoverLeave);
+        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, hoverMove, hoverLeave };
         this.nativePdfBindings.set(container, binding);
         this.nativePdfBindingList.push(binding);
       }
@@ -7104,6 +7130,7 @@ class PaperLibraryPlugin extends Plugin {
         merged.forEach((rect) => {
           const element = document.createElement("div");
           element.className = "paperlib-native-pdf-highlight-rect";
+          element.dataset.markId = mark.id || "";
           element.style.left = `${rect[0] / dims.width * 100}%`;
           element.style.top = `${(1 - rect[3] / dims.height) * 100}%`;
           element.style.width = `${(rect[2] - rect[0]) / dims.width * 100}%`;
@@ -7124,6 +7151,47 @@ class PaperLibraryPlugin extends Plugin {
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
     });
+  }
+
+  handleNativePdfHighlightHover(event, leaf, container) {
+    if (this.nativeHighlightHoverTimer) return;
+    this.nativeHighlightHoverTimer = setTimeout(() => { this.nativeHighlightHoverTimer = null; }, 80);
+    const pageEl = event.target?.closest?.(".page[data-page-number], .page");
+    if (!pageEl || !container.contains(pageEl)) return this.hideNativePdfHighlightTooltip();
+    let hit = null;
+    pageEl.querySelectorAll(".paperlib-native-pdf-highlight-rect").forEach((rectEl) => {
+      if (hit) return;
+      const rect = rectEl.getBoundingClientRect?.();
+      if (rect && event.clientX >= rect.left && event.clientX <= rect.right
+        && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+        hit = rectEl;
+      }
+    });
+    if (!hit) return this.hideNativePdfHighlightTooltip();
+    const file = leaf.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    const mark = paper && (this.ensureResearchWorkspace(paper).highlights || [])
+      .find((item) => item.id === hit.dataset?.markId);
+    if (!mark?.text) return this.hideNativePdfHighlightTooltip();
+    let tooltip = this.nativeHighlightTooltip;
+    if (!tooltip?.isConnected) {
+      tooltip = document.createElement("div");
+      tooltip.className = "paperlib-native-pdf-highlight-tooltip";
+      document.body.appendChild(tooltip);
+      this.nativeHighlightTooltip = tooltip;
+    }
+    tooltip.setText(mark.text);
+    const rect = tooltip.getBoundingClientRect();
+    const x = Math.min(window.innerWidth - rect.width - 8, Math.max(8, event.clientX + 12));
+    const y = event.clientY - rect.height - 12 >= 8 ? event.clientY - rect.height - 12 : event.clientY + 16;
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+  }
+
+  hideNativePdfHighlightTooltip() {
+    if (!this.nativeHighlightTooltip) return;
+    this.nativeHighlightTooltip.remove();
+    this.nativeHighlightTooltip = null;
   }
 
   recordPdfReadingPosition(paper, page) {
@@ -7165,6 +7233,12 @@ class PaperLibraryPlugin extends Plugin {
     if (this.settings.pdfOpenPosition === "first") return;
     const target = Math.max(1, Number(paper?.readingPosition?.page) || 0);
     if (!file?.path || target <= 1) return;
+    await this.scrollNativePdfToPage(file, target);
+  }
+
+  async scrollNativePdfToPage(file, page) {
+    const target = Math.max(1, Number(page) || 0);
+    if (!file?.path || !target) return false;
     // 原生视图是连续滚动 + 全页占位符：等占位符出现后定位，未渲染的远页也能滚到
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const leaves = this.app.workspace.getLeavesOfType?.("pdf")?.filter((leaf) => leaf.view?.file?.path === file.path) || [];
@@ -7173,10 +7247,23 @@ class PaperLibraryPlugin extends Plugin {
       const pageEl = leaf?.view?.containerEl?.querySelector?.(`.page[data-page-number="${target}"]`);
       if (pageEl) {
         pageEl.scrollIntoView?.({ block: "start" });
-        return;
+        return true;
+      }
+      if (!leaves.length && attempt === 0) {
+        await this.app.workspace.getLeaf("tab").openFile(file);
       }
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
+    return false;
+  }
+
+  async openNativePdfAtPage(paper, page) {
+    const file = this.app.vault.getAbstractFileByPath(normalizePath(paper?.pdfPath || ""));
+    if (!file || file.extension?.toLocaleLowerCase() !== "pdf") return false;
+    const existing = this.app.workspace.getLeavesOfType("pdf").find((leaf) => leaf.view?.file?.path === file.path);
+    if (existing) this.app.workspace.setActiveLeaf?.(existing, { focus: true });
+    else await this.app.workspace.getLeaf("tab").openFile(file);
+    return this.scrollNativePdfToPage(file, page);
   }
 
   beginNativePdfInkStroke(event, leaf, container, pageEl, state) {
@@ -7420,6 +7507,42 @@ class PaperLibraryPlugin extends Plugin {
         }
       });
     });
+    toolbar.createDiv({ cls: "paperlib-pdf-selection-divider" });
+    const addAction = (icon, label, draft) => {
+      const button = toolbar.createEl("button", {
+        cls: "paperlib-pdf-selection-action",
+        attr: { type: "button", "aria-label": label, title: label }
+      });
+      setPaperlibIcon(button, icon);
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!toolbar.isConnected) return;
+        try {
+          const context = await this.getNativePdfSelectionContext(leaf, textLayer);
+          this.dismissNativePdfSelectionToolbar();
+          selection.removeAllRanges();
+          if (!context?.text) return;
+          const file = leaf.view?.file || this.app.workspace.getActiveFile();
+          const paper = this.getPaperForPdfFile(file);
+          await this.addAIContext({
+            type: "selection",
+            label: `${paper?.title || file?.basename || "PDF"} · 第 ${context.page} 页选区`,
+            detail: `${context.text.length} 字符`,
+            text: context.text,
+            path: context.pdfPath || file?.path || "",
+            page: context.page,
+            key: `pdf-selection:${context.pdfPath || file?.path || ""}:${context.page}:${context.text.slice(0, 120)}`
+          }, { draft });
+        } catch (error) {
+          this.dismissNativePdfSelectionToolbar();
+          console.error("Paper Library: failed to send PDF selection to composer", error);
+          new Notice(`发送失败：${error.message || error}`);
+        }
+      });
+    };
+    addAction("sparkles", "解释", "Explain this passage from the paper in clear terms.");
+    addAction("languages", "翻译", "Translate this passage into Chinese.");
     const popup = toolbar.getBoundingClientRect();
     const rect = selectedRange.getBoundingClientRect();
     const viewport = owner.visualViewport;
@@ -7433,7 +7556,16 @@ class PaperLibraryPlugin extends Plugin {
     toolbar.style.top = `${Math.max(top + 8, Math.min(bottom - popup.height - 8, y))}px`;
     const dismiss = () => this.dismissNativePdfSelectionToolbar();
     const outside = (event) => { if (!toolbar.contains(event.target)) dismiss(); };
-    const keydown = (event) => { if (event.key === "Escape" || event.metaKey || event.ctrlKey) dismiss(); };
+    const keydown = (event) => {
+      if (event.key === "Escape" || event.metaKey || event.ctrlKey) { dismiss(); return; }
+      // 数字键 1-5 快速选择对应颜色
+      const index = Number.parseInt(event.key, 10) - 1;
+      if (Number.isInteger(index) && index >= 0 && index < CANVAS_HIGHLIGHT_COLORS.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        toolbar.querySelectorAll(".paperlib-pdf-selection-color")[index]?.click();
+      }
+    };
     const selectionChanged = () => {
       if (!selection.rangeCount || selection.isCollapsed) { dismiss(); return; }
       const range = selection.getRangeAt(0);

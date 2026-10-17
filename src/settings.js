@@ -704,7 +704,7 @@ class PaperLibrarySettingTab extends PluginSettingTab {
     }
     new Setting(containerEl)
       .setName("默认高亮颜色")
-      .setDesc("长按拖出摘录时使用的高亮颜色。")
+      .setDesc("长按拖出摘录、荧光笔与 PDF 选区弹条使用的初始颜色。")
       .addDropdown((dropdown) => {
         CANVAS_HIGHLIGHT_COLORS.forEach((color) => dropdown.addOption(color.id, color.label));
         const current = String(this.plugin.settings.defaultHighlightColor || "yellow").toLocaleLowerCase();

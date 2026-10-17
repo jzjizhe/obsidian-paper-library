@@ -96,7 +96,7 @@ const DEFAULT_SETTINGS = {
   pdfOpenMode: "native",
   pdfOpenPosition: "last",
   researchWorkspaceHeading: "Research Workspace",
-  defaultHighlightColor: "Yellow",
+  defaultHighlightColor: "yellow",
   tableColumnWidths: Object.fromEntries(Object.entries(PAPER_TABLE_COLUMNS).map(([key, value]) => [key, value.width])),
   tableColumnOrder: [...DEFAULT_PAPER_TABLE_COLUMN_ORDER],
   jcrRankCache: {},

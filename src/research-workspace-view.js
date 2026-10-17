@@ -27,7 +27,7 @@ class PaperResearchWorkspaceView extends ItemView {
     this.excerptDrag = null;
     this.inkDrawingCleanup = null;
     this.toolMode = "select";
-    this.highlightColor = "yellow";
+    this.highlightColor = String(plugin?.settings?.defaultHighlightColor || "yellow").toLocaleLowerCase();
     this.inkColor = "yellow";
     this.colorPaletteOpen = false;
     this.searchOpen = false;
