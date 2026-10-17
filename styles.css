@@ -9948,6 +9948,11 @@ button.paperlib-file-open {
   cursor: default !important;
 }
 
+.paperlib-native-eraser-mode .textLayer,
+.paperlib-native-eraser-mode .textLayer span {
+  cursor: cell !important;
+}
+
 .paperlib-native-highlight-mode .textLayer,
 .paperlib-native-highlight-mode .textLayer span {
   cursor: var(--paperlib-native-highlighter-cursor), crosshair !important;

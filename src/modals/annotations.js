@@ -1,6 +1,6 @@
 /* PDF 标注回看弹窗：按页码列出当前论文的所有高亮，点击跳页定位，支持删除。 */
 
-import { Modal, normalizePath } from "obsidian";
+import { Modal, Notice, normalizePath } from "obsidian";
 import { CANVAS_HIGHLIGHT_COLORS } from "../constants.js";
 import { truncate } from "../text-utils.js";
 import { setPaperlibIcon } from "../ui-utils.js";
@@ -77,4 +77,35 @@ class PdfAnnotationsModal extends Modal {
   }
 }
 
-export { PdfAnnotationsModal };
+class ClearAnnotationsModal extends Modal {
+  constructor(app, plugin, paper, pdfPath, count) {
+    super(app);
+    this.plugin = plugin;
+    this.paper = paper;
+    this.pdfPath = pdfPath;
+    this.count = count;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h2", { text: "清空所有标注" });
+    contentEl.createEl("p", {
+      text: `将删除本文的 ${this.count} 条标注（论文库、论文笔记与 PDF 文件中一并移除），此操作不可撤销。`
+    });
+    const buttons = contentEl.createDiv({ cls: "modal-button-container" });
+    buttons.createEl("button", { text: "取消" }).addEventListener("click", () => this.close());
+    const confirm = buttons.createEl("button", { text: "清空", cls: "mod-cta" });
+    confirm.addEventListener("click", async () => {
+      confirm.disabled = true;
+      this.close();
+      const removed = await this.plugin.clearPaperAnnotations(this.paper, this.pdfPath);
+      new Notice(`已清空 ${removed} 条标注`);
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+export { ClearAnnotationsModal, PdfAnnotationsModal };

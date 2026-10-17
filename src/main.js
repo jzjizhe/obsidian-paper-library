@@ -128,7 +128,7 @@ import {
   safeCollectionPath
 } from "./collection-utils.js";
 import { CslImportModal, CitationStyleModal } from "./modals/citation.js";
-import { PdfAnnotationsModal } from "./modals/annotations.js";
+import { ClearAnnotationsModal, PdfAnnotationsModal } from "./modals/annotations.js";
 import {
   DeleteCollectionModal,
   DeleteFigureRecognitionRuntimeModal,
@@ -872,13 +872,14 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
     this.nativePdfToolbarObserver?.disconnect();
-    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll }) => {
+    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);
       container.removeEventListener("contextmenu", contextMenu, true);
       container.removeEventListener("dragstart", dragStart, true);
       container.removeEventListener("click", click, true);
       container.removeEventListener("scroll", scroll, true);
+      container.removeEventListener("pointermove", pointerMove, true);
     });
     this.persistPaperReadingPositions();
     this.nativePdfBindingList = [];
@@ -6935,6 +6936,18 @@ class PaperLibraryPlugin extends Plugin {
       askRegion.setAttribute("aria-label", "圈选区域 Ask AI");
       setPaperlibIcon(askRegion, "scan");
       group.appendChild(askRegion);
+      const eraser = document.createElement("button");
+      eraser.className = "clickable-icon paperlib-native-pdf-tool is-eraser";
+      eraser.title = "橡皮：拖过标注以删除";
+      eraser.setAttribute("aria-label", "橡皮");
+      setPaperlibIcon(eraser, "eraser");
+      group.appendChild(eraser);
+      const clearAll = document.createElement("button");
+      clearAll.className = "clickable-icon paperlib-native-pdf-tool is-clear-annotations";
+      clearAll.title = "清空本文所有标注";
+      clearAll.setAttribute("aria-label", "清空所有标注");
+      setPaperlibIcon(clearAll, "trash-2");
+      group.appendChild(clearAll);
       const annotations = document.createElement("button");
       annotations.className = "clickable-icon paperlib-native-pdf-tool is-annotations";
       annotations.title = "查看本文所有标注";
@@ -6956,6 +6969,34 @@ class PaperLibraryPlugin extends Plugin {
       figures.setAttribute("aria-label", "浏览所有图片");
       setPaperlibIcon(figures, "images");
       group.appendChild(figures);
+      eraser.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        state.mode = state.mode === "eraser" ? "" : "eraser";
+        state.paletteOpen = false;
+        state.erasing = null;
+        this.updateNativePdfToolbarState(container, group, state);
+      });
+      clearAll.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const file = leaf.view?.file || this.app.workspace.getActiveFile();
+        if (!file) return new Notice("当前没有打开 PDF");
+        const paper = this.getPaperForPdfFile(file);
+        if (!paper) return new Notice("请先把这个文档加入论文库");
+        const path = normalizePath(file.path);
+        const workspace = this.ensureResearchWorkspace(paper);
+        const highlightCount = (workspace.highlights || []).filter((mark) => (
+          normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+        )).length;
+        const annotationCount = (paper.annotations || []).filter((mark) => (
+          normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+          && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+        )).length;
+        const total = highlightCount + annotationCount;
+        if (!total) return new Notice("本文没有标注");
+        new ClearAnnotationsModal(this.app, this, paper, path, total).open();
+      });
       select.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -7029,6 +7070,13 @@ class PaperLibraryPlugin extends Plugin {
             });
             return;
           }
+          if (active?.mode === "eraser") {
+            if (pageEl && container.contains(pageEl)) {
+              active.erasing = { highlights: new Map(), strokes: new Map() };
+              void this.collectNativePdfEraseTargets(event, leaf, container, active);
+            }
+            return;
+          }
           if (active?.mode === "ink") {
             if (pageEl && container.contains(pageEl)) this.beginNativePdfInkStroke(event, leaf, container, pageEl, active);
             return;
@@ -7042,7 +7090,7 @@ class PaperLibraryPlugin extends Plugin {
         const pointerUp = (event) => {
           const active = this.nativePdfStates.get(container);
           // 空模式（纯选择）也要放行：选中文字后弹出颜色标注条
-          if (!["highlight", "note", ""].includes(active?.mode ?? "") || active.busy) return;
+          if (!["highlight", "note", "eraser", ""].includes(active?.mode ?? "") || active.busy) return;
           void this.handleNativePdfPointerUp(event, leaf, container, active);
         };
         const contextMenu = (event) => {
@@ -7074,7 +7122,14 @@ class PaperLibraryPlugin extends Plugin {
         container.addEventListener("dragstart", dragStart, true);
         container.addEventListener("click", click, true);
         container.addEventListener("scroll", scroll, true);
-        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll };
+        const pointerMove = (event) => {
+          const active = this.nativePdfStates.get(container);
+          if (active?.mode === "eraser" && active.erasing) {
+            void this.collectNativePdfEraseTargets(event, leaf, container, active);
+          }
+        };
+        container.addEventListener("pointermove", pointerMove, true);
+        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove };
         this.nativePdfBindings.set(container, binding);
         this.nativePdfBindingList.push(binding);
       }
@@ -7870,6 +7925,7 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
+    group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
       "is-visible", Boolean(state.paletteOpen && ["highlight", "ink"].includes(state.mode))
     );
@@ -7880,6 +7936,7 @@ class PaperLibraryPlugin extends Plugin {
     container.classList.toggle("paperlib-native-ink-mode", state.mode === "ink");
     container.classList.toggle("paperlib-native-note-mode", state.mode === "note");
     container.classList.toggle("paperlib-native-ai-region-mode", state.mode === "ai-region");
+    container.classList.toggle("paperlib-native-eraser-mode", state.mode === "eraser");
   }
 
   showNativePdfSelectionToolbar(leaf, textLayer) {
@@ -8015,6 +8072,10 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async handleNativePdfPointerUp(event, leaf, container, state) {
+    if (state.mode === "eraser") {
+      await this.finishNativePdfErase(leaf, container, state);
+      return;
+    }
     const textLayer = event.target?.closest?.(".textLayer");
     if (!textLayer || !container.contains(textLayer)) return;
     // 纯选择（无工具激活）：弹出颜色标注条，等用户点颜色后再保存
@@ -8137,6 +8198,17 @@ class PaperLibraryPlugin extends Plugin {
         return;
       }
     }
+    // 注释层元素被我们隐藏后无法作为右键目标：按库内标注的几何位置命中，
+    // 保证右键高亮区域始终能弹出删除菜单
+    if (directPage && directFile && directPaper && container.contains(directPage)) {
+      const hits = await this.findNativePdfMarksAtEvent(event, directPage, directPaper, directFile);
+      if (hits.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.showNativePdfMarkDeleteMenu(event, directPaper, hits);
+        return;
+      }
+    }
     const annotationEl = event.target?.closest?.(
       ".annotationLayer [data-annotation-id], .annotationLayer section, .annotationLayer .highlightAnnotation, .annotationLayer .textAnnotation"
     );
@@ -8162,6 +8234,108 @@ class PaperLibraryPlugin extends Plugin {
       console.error("Paper Library: failed to identify native PDF annotation", error);
       new Notice(`无法删除此 PDF 标注：${error.message || error}`);
     }
+  }
+
+  async findNativePdfMarksAtEvent(event, pageEl, paper, file) {
+    const pageNumber = Number(pageEl?.dataset?.pageNumber || pageEl?.getAttribute?.("data-page-number"));
+    const bounds = pageEl?.getBoundingClientRect?.();
+    if (!pageNumber || !paper || !file?.path || !bounds?.width || !bounds?.height) return [];
+    const sizes = await this.getNativePdfPageSizes(file).catch(() => null);
+    const dims = sizes?.get(pageNumber);
+    if (!dims?.width || !dims?.height) return [];
+    const path = normalizePath(file.path);
+    return this.getPdfMarkEntries(paper, path).filter(({ record }) => {
+      if (Number(record.page) !== pageNumber) return false;
+      return (record.pdfRects || []).some((item) => {
+        const rect = item?.rect;
+        if (!Array.isArray(rect) || rect.length !== 4) return false;
+        const left = bounds.left + Math.min(rect[0], rect[2]) / dims.width * bounds.width;
+        const right = bounds.left + Math.max(rect[0], rect[2]) / dims.width * bounds.width;
+        const top = bounds.top + (1 - Math.max(rect[1], rect[3]) / dims.height) * bounds.height;
+        const bottom = bounds.top + (1 - Math.min(rect[1], rect[3]) / dims.height) * bounds.height;
+        return event.clientX >= left - 2 && event.clientX <= right + 2
+          && event.clientY >= top - 2 && event.clientY <= bottom + 2;
+      });
+    });
+  }
+
+  async collectNativePdfEraseTargets(event, leaf, container, state) {
+    if (!state.erasing) return;
+    const file = leaf.view?.file || this.app.workspace.getActiveFile();
+    const paper = file ? this.getPaperForPdfFile(file) : null;
+    if (!file || !paper) return;
+    const pageEl = event.target?.closest?.(".page[data-page-number], .page")
+      || container.ownerDocument?.elementFromPoint?.(event.clientX, event.clientY)?.closest?.(".page");
+    if (!pageEl || !container.contains(pageEl)) return;
+    const hits = await this.findNativePdfMarksAtEvent(event, pageEl, paper, file);
+    hits.forEach((entry) => state.erasing.highlights.set(entry.record.id, entry));
+    const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+    const stroke = this.findPdfInkStrokeAtEvent(event, pageEl, paper, file.path, pageNumber);
+    if (stroke) state.erasing.strokes.set(stroke.id, stroke);
+  }
+
+  async finishNativePdfErase(leaf, container, state) {
+    const session = state.erasing;
+    state.erasing = null;
+    if (!session) return;
+    const file = leaf.view?.file || this.app.workspace.getActiveFile();
+    const paper = file ? this.getPaperForPdfFile(file) : null;
+    if (!paper) return;
+    const entries = [...session.highlights.values()];
+    const canvasEntries = entries.filter((entry) => entry.source === "canvas-highlight");
+    const otherEntries = entries.filter((entry) => entry.source !== "canvas-highlight");
+    if (canvasEntries.length) {
+      await this.removeCanvasHighlights(paper, canvasEntries.map((entry) => entry.record.id));
+    }
+    for (const entry of otherEntries) {
+      await this.deletePdfMark(paper, entry);
+    }
+    for (const id of session.strokes.keys()) {
+      await this.removePdfInkStroke(paper, id);
+    }
+    const removed = entries.length + session.strokes.size;
+    if (removed) new Notice(`已擦除 ${removed} 处标注`);
+  }
+
+  async clearPaperAnnotations(paper, pdfPath) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return 0;
+    const path = normalizePath(pdfPath || paper.pdfPath || "");
+    const workspace = this.ensureResearchWorkspace(paper);
+    const highlights = (workspace.highlights || []).filter((mark) => (
+      normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+    ));
+    const annotations = (paper.annotations || []).filter((mark) => (
+      normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+      && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+    ));
+    const records = [...highlights, ...annotations];
+    if (!records.length) return 0;
+    if (highlights.length) {
+      const ids = new Set(highlights.map((mark) => mark.id));
+      workspace.highlights = (workspace.highlights || []).filter((mark) => !ids.has(mark.id));
+      await this.persistResearchWorkspace(paper, false);
+    }
+    if (annotations.length) {
+      const ids = new Set(annotations.map((mark) => mark.pdfAnnotationId || mark.id));
+      paper.annotations = (paper.annotations || []).filter((mark) => !ids.has(mark.pdfAnnotationId || mark.id));
+      await this.saveSettings();
+      const noteFile = await this.ensurePaperNote(paper);
+      if (noteFile) {
+        let content = await this.app.vault.read(noteFile);
+        content = this.removeAnnotationBlocks(content, new Set(annotations.map((mark) => mark.id)));
+        content = this.mergeResearchWorkspaceSection(content, paper);
+        await this.app.vault.modify(noteFile, content);
+      }
+    }
+    try {
+      await this.removeLocalPdfAnnotations(records);
+    } catch (error) {
+      console.error("Paper Library: failed to clear PDF annotations", error);
+    }
+    this.refreshResearchPdfHighlights(paper);
+    this.refreshViews();
+    return records.length;
   }
 
   showNativePdfMarkDeleteMenu(event, paper, marks) {
