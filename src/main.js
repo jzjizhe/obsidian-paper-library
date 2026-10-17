@@ -7185,6 +7185,8 @@ class PaperLibraryPlugin extends Plugin {
         const pointerDown = (event) => {
           const active = this.nativePdfStates.get(container);
           if (active?.busy) return;
+          // 工具栏与调色板属于插件自身 UI，点击它们不应在页面上落笔
+          if (event.target?.closest?.(".paperlib-native-pdf-tools")) return;
           const pageEl = event.target?.closest?.(".page[data-page-number], .page");
           if (event.button === 2 && pageEl && container.contains(pageEl)) {
             const file = leaf.view?.file || this.app.workspace.getActiveFile();
