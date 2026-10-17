@@ -14632,3 +14632,47 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   background: color-mix(in srgb, var(--text-muted) 34%, transparent) !important;
   transition: background-color 140ms ease;
 }
+
+/* 画笔粗细选择器（原生 + 画布） */
+.paperlib-native-pdf-widths,
+.paperlib-ink-widths {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.paperlib-native-pdf-widths {
+  display: none;
+}
+
+.paperlib-native-ink-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
+  display: flex;
+}
+
+.paperlib-native-pdf-width,
+.paperlib-ink-width {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.paperlib-native-pdf-width span,
+.paperlib-ink-width-dot {
+  display: block;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.paperlib-native-pdf-width.is-active span,
+.paperlib-ink-width.is-active .paperlib-ink-width-dot {
+  background: var(--interactive-accent);
+}

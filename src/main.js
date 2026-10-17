@@ -6843,7 +6843,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 3, paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6868,10 +6868,11 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 3, paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
+      state.inkWidth ||= 3;
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -6913,6 +6914,27 @@ class PaperLibraryPlugin extends Plugin {
         });
         palette.appendChild(swatch);
       });
+      const widths = document.createElement("div");
+      widths.className = "paperlib-native-pdf-widths";
+      [2, 4, 6].forEach((width) => {
+        const button = document.createElement("button");
+        button.className = "paperlib-native-pdf-width";
+        button.dataset.width = String(width);
+        button.title = width <= 2 ? "细" : width >= 6 ? "粗" : "中";
+        button.setAttribute("aria-label", `画笔粗细：${button.title}`);
+        const dot = document.createElement("span");
+        dot.style.width = `${width + 2}px`;
+        dot.style.height = `${width + 2}px`;
+        button.appendChild(dot);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.inkWidth = width;
+          this.updateNativePdfToolbarState(container, group, state);
+        });
+        widths.appendChild(button);
+      });
+      palette.appendChild(widths);
       group.appendChild(palette);
       const ink = document.createElement("button");
       ink.className = "clickable-icon paperlib-native-pdf-tool is-ink";
@@ -7751,7 +7773,7 @@ class PaperLibraryPlugin extends Plugin {
     const points = [];
     const stroke = {
       id: workspaceId("ink"), type: "ink", page: pageNumber,
-      pdfPath: file.path, color: state.inkColor || state.color || "yellow", width: 3, points
+      pdfPath: file.path, color: state.inkColor || state.color || "yellow", width: Number(state.inkWidth) || 3, points
     };
     const svg = this.ensureNativePdfInkLayer(pageEl);
     const path = this.appendNativePdfInkPath(svg, stroke, true);
@@ -7926,6 +7948,9 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
+    group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
+      button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 3));
+    });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
       "is-visible", Boolean(state.paletteOpen && ["highlight", "ink"].includes(state.mode))
     );

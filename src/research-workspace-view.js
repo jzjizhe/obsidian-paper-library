@@ -29,6 +29,7 @@ class PaperResearchWorkspaceView extends ItemView {
     this.toolMode = "select";
     this.highlightColor = String(plugin?.settings?.defaultHighlightColor || "yellow").toLocaleLowerCase();
     this.inkColor = "yellow";
+    this.inkWidth = 3;
     this.colorPaletteOpen = false;
     this.searchOpen = false;
     this.pdfScrollByPath = new Map();
@@ -262,6 +263,23 @@ class PaperResearchWorkspaceView extends ItemView {
         this.refreshCanvasToolbar(root, paper, workspace);
       });
     });
+    if (this.toolMode === "ink") {
+      const widths = palette.createDiv({ cls: "paperlib-ink-widths" });
+      [2, 4, 6].forEach((width) => {
+        const button = widths.createEl("button", {
+          cls: `paperlib-ink-width ${Number(this.inkWidth) === width ? "is-active" : ""}`,
+          attr: { "aria-label": `画笔粗细 ${width}`, title: width <= 2 ? "细" : width >= 6 ? "粗" : "中" }
+        });
+        const dot = button.createSpan({ cls: "paperlib-ink-width-dot" });
+        dot.style.width = `${width + 2}px`;
+        dot.style.height = `${width + 2}px`;
+        button.addEventListener("click", () => {
+          this.inkWidth = width;
+          this.colorPaletteOpen = false;
+          this.refreshCanvasToolbar(root, paper, workspace);
+        });
+      });
+    }
 
     const insertGroup = toolbar.createDiv({ cls: "paperlib-canvas-tool-group" });
     iconButton(insertGroup, "sticky-note", "添加想法", () => this.addNode(paper, "note"));
@@ -1542,7 +1560,7 @@ class PaperResearchWorkspaceView extends ItemView {
       page: pageNumber,
       pdfPath: paper.pdfPath,
       color: this.inkColor,
-      width: 3,
+      width: Number(this.inkWidth) || 3,
       points
     };
     const path = this.renderPdfInkPath(inkLayer, stroke, true);
