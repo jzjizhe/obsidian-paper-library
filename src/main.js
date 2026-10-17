@@ -6844,7 +6844,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 3, paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6870,11 +6870,11 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 3, paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
-      state.inkWidth ||= 3;
+      state.inkWidth ||= 4;
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -6924,11 +6924,11 @@ class PaperLibraryPlugin extends Plugin {
       });
       const widths = document.createElement("div");
       widths.className = "paperlib-native-pdf-widths";
-      [2, 4, 6].forEach((width) => {
+      [1.5, 2.5, 4, 6, 8].forEach((width) => {
         const button = document.createElement("button");
         button.className = "paperlib-native-pdf-width";
         button.dataset.width = String(width);
-        button.title = width <= 2 ? "细" : width >= 6 ? "粗" : "中";
+        button.title = width <= 1.5 ? "极细" : width <= 2.5 ? "细" : width <= 4 ? "中" : width <= 6 ? "粗" : "极粗";
         button.setAttribute("aria-label", `画笔粗细：${button.title}`);
         const dot = document.createElement("span");
         dot.style.width = `${width + 2}px`;
@@ -7895,7 +7895,7 @@ class PaperLibraryPlugin extends Plugin {
     const points = [];
     const stroke = {
       id: workspaceId("ink"), type: "ink", page: pageNumber,
-      pdfPath: file.path, color: state.inkColor || state.color || "yellow", width: Number(state.inkWidth) || 3, points
+      pdfPath: file.path, color: state.inkColor || state.color || "yellow", width: Number(state.inkWidth) || 4, points
     };
     const svg = this.ensureNativePdfInkLayer(pageEl);
     const path = this.appendNativePdfInkPath(svg, stroke, true);
@@ -12978,7 +12978,8 @@ class PaperLibraryPlugin extends Plugin {
     });
     const target = `${pdfPath}#page=${page}&selection=${selectionValue}&color=${normalizedColor}`;
     if (existing) {
-      if (existing.color === normalizedColor) return false;
+      // 颜色与类型都相同才视为无变化；只改类型（如高亮→下划线）也要更新
+      if (existing.color === normalizedColor && (existing.pdfSubtype || "Highlight") === pdfSubtype) return false;
       existing.color = normalizedColor;
       existing.pdfSubtype = pdfSubtype;
       existing.link = target;

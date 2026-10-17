@@ -29,7 +29,7 @@ class PaperResearchWorkspaceView extends ItemView {
     this.toolMode = "select";
     this.highlightColor = String(plugin?.settings?.defaultHighlightColor || "yellow").toLocaleLowerCase();
     this.inkColor = "yellow";
-    this.inkWidth = 3;
+    this.inkWidth = 4;
     this.colorPaletteOpen = false;
     this.searchOpen = false;
     this.pdfScrollByPath = new Map();
@@ -272,10 +272,10 @@ class PaperResearchWorkspaceView extends ItemView {
     });
     if (this.toolMode === "ink") {
       const widths = palette.createDiv({ cls: "paperlib-ink-widths" });
-      [2, 4, 6].forEach((width) => {
+      [1.5, 2.5, 4, 6, 8].forEach((width) => {
         const button = widths.createEl("button", {
           cls: `paperlib-ink-width ${Number(this.inkWidth) === width ? "is-active" : ""}`,
-          attr: { "aria-label": `画笔粗细 ${width}`, title: width <= 2 ? "细" : width >= 6 ? "粗" : "中" }
+          attr: { "aria-label": `画笔粗细 ${width}`, title: width <= 1.5 ? "极细" : width <= 2.5 ? "细" : width <= 4 ? "中" : width <= 6 ? "粗" : "极粗" }
         });
         const dot = button.createSpan({ cls: "paperlib-ink-width-dot" });
         dot.style.width = `${width + 2}px`;
@@ -1592,7 +1592,7 @@ class PaperResearchWorkspaceView extends ItemView {
       page: pageNumber,
       pdfPath: paper.pdfPath,
       color: this.inkColor,
-      width: Number(this.inkWidth) || 3,
+      width: Number(this.inkWidth) || 4,
       points
     };
     const path = this.renderPdfInkPath(inkLayer, stroke, true);
