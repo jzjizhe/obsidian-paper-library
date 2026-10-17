@@ -95,7 +95,8 @@ const DEFAULT_SETTINGS = {
   pdfAnnotationWriteback: "on-leave",
   pdfOpenMode: "native",
   pdfOpenPosition: "last",
-  pdfTextBoxFontSize: 11,
+  pdfTextBoxFontSize: 18,
+  pdfTextBoxTextColor: "default",
   researchWorkspaceHeading: "Research Workspace",
   defaultHighlightColor: "yellow",
   tableColumnWidths: Object.fromEntries(Object.entries(PAPER_TABLE_COLUMNS).map(([key, value]) => [key, value.width])),
@@ -137,6 +138,16 @@ const DEFAULT_SETTINGS = {
   paperComposerDirectContextBindings: {}
 };
 
+const PDF_TEXT_COLORS = [
+  { id: "default", label: "默认", value: "var(--text-normal)" },
+  { id: "red", label: "红", value: "#e5534b" },
+  { id: "orange", label: "橙", value: "#e8892b" },
+  { id: "green", label: "绿", value: "#2ea44f" },
+  { id: "blue", label: "蓝", value: "#2f6fdb" },
+  { id: "purple", label: "紫", value: "#a855f7" },
+  { id: "pink", label: "粉", value: "#d946a6" }
+];
+
 export {
   ALL_VIEW_TYPES,
   CANVAS_HIGHLIGHT_COLORS,
@@ -156,6 +167,7 @@ export {
   PAPER_COMPOSER_ICON,
   PAPER_COMPOSER_MODEL_OPTIONS_VERSION,
   PAPER_TABLE_COLUMNS,
+  PDF_TEXT_COLORS,
   PAPER_TABLE_COLUMN_META,
   RESEARCH_VIEW_TYPE,
   VIEW_TYPE,

@@ -761,10 +761,10 @@ class PaperLibrarySettingTab extends PluginSettingTab {
         }));
     new Setting(containerEl)
       .setName("PDF 文本框字号")
-      .setDesc("插入文本框时的默认字号；可对单个文本框右键增减字号（8-24）。")
+      .setDesc("插入文本框时的默认字号（8-48），插入面板中可直接输入。")
       .addSlider((slider) => slider
-        .setLimits(8, 24, 1)
-        .setValue(Number(this.plugin.settings.pdfTextBoxFontSize) || 11)
+        .setLimits(8, 48, 1)
+        .setValue(Number(this.plugin.settings.pdfTextBoxFontSize) || 18)
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.pdfTextBoxFontSize = value;

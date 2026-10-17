@@ -14658,16 +14658,16 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   display: none;
 }
 
-.paperlib-native-pdf-sizes {
+.paperlib-native-pdf-textbox-panel {
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding-left: 8px;
   border-left: 1px solid var(--background-modifier-border);
 }
 
-.paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-sizes {
+.paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-textbox-panel {
   display: flex;
 }
 
@@ -14676,175 +14676,44 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   display: none;
 }
 
-.paperlib-native-pdf-size {
-  width: 28px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
+.paperlib-native-pdf-size-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-muted);
   font-size: 11px;
-  cursor: pointer;
 }
 
-.paperlib-native-pdf-size:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.paperlib-native-pdf-size.is-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-}
-
-.paperlib-native-ink-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
-  display: flex;
-}
-
-.paperlib-native-pdf-width,
-.paperlib-ink-width {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
+.paperlib-native-pdf-size-input {
+  width: 44px;
+  padding: 2px 4px;
+  border: 1px solid var(--background-modifier-border);
   border-radius: 5px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.paperlib-native-pdf-width span,
-.paperlib-ink-width-dot {
-  display: block;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-
-.paperlib-native-pdf-width.is-active span,
-.paperlib-ink-width.is-active .paperlib-ink-width-dot {
-  background: var(--interactive-accent);
-}
-
-/* PDF 批注气泡（原生 + 画布） */
-.paperlib-native-pdf-note-layer,
-.paperlib-pdf-note-layer {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.paperlib-pdf-note-badge {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 200px;
-  padding: 2px 7px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
   background: var(--background-primary);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
-  color: var(--text-normal);
-  font-size: 10px;
-  line-height: 1.4;
-  cursor: pointer;
-  pointer-events: auto;
-  transform: translate(4px, -100%);
-}
-
-.paperlib-pdf-note-badge:hover {
-  background: var(--background-modifier-hover);
-}
-
-.paperlib-pdf-note-badge-icon {
-  display: flex;
-  flex: 0 0 12px;
-  color: var(--text-accent);
-}
-
-.paperlib-pdf-note-badge-icon .svg-icon {
-  width: 12px;
-  height: 12px;
-}
-
-.paperlib-pdf-note-badge-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.paperlib-pdf-note-popup {
-  position: absolute;
-  z-index: 4;
-  display: none;
-  max-width: 280px;
-  margin-top: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
-  color: var(--text-normal);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  pointer-events: auto;
-}
-
-.paperlib-pdf-note-badge.is-open + .paperlib-pdf-note-popup {
-  display: block;
-}
-
-/* 自由文本框（原生阅读器） */
-.paperlib-native-pdf-textbox-layer {
-  position: absolute;
-  z-index: 4;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.paperlib-pdf-textbox-card {
-  position: absolute;
-  display: inline-block;
-  width: fit-content;
-  min-width: 10px;
-  min-height: 16px;
-  padding: 1px 3px;
-  border: 1px solid var(--color-purple, #a855f7);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.72);
-  background: color-mix(in srgb, var(--background-primary) 72%, transparent);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 10%);
   color: var(--text-normal);
   font-size: 11px;
-  line-height: 1.5;
-  pointer-events: auto;
-  cursor: grab;
+  text-align: center;
 }
 
-.paperlib-pdf-textbox-card:hover,
-.paperlib-pdf-textbox-card.is-editing {
-  border-color: var(--color-purple, #a855f7);
-  box-shadow: 0 2px 10px rgb(168 85 247 / 25%);
+.paperlib-native-pdf-text-colors {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
 }
 
-.paperlib-pdf-textbox-card.is-editing {
-  cursor: text;
+.paperlib-native-pdf-text-color {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--swatch-color, var(--text-normal));
+  cursor: pointer;
 }
 
-.paperlib-pdf-textbox-content {
-  min-height: 14px;
-  padding: 1px 3px;
-  outline: none;
-  white-space: pre-wrap;
-  word-break: break-word;
-  cursor: inherit;
+.paperlib-native-pdf-text-color.is-active {
+  border-color: var(--text-normal);
 }
 
 .paperlib-native-textbox-mode .textLayer,

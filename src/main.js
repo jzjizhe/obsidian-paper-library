@@ -42,6 +42,7 @@ import {
 } from "./citation-engine.js";
 import {
   ALL_VIEW_TYPES,
+  PDF_TEXT_COLORS,
   CANVAS_HIGHLIGHT_COLORS,
   CLAUDIAN_COLLAB_DETAIL_VIEW_TYPE,
   CLAUDIAN_VIEW_TYPE,
@@ -6845,7 +6846,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 11, paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "default"), paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6872,12 +6873,13 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 11, paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "default"), paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
       state.inkWidth ||= 4;
-      state.textboxFontSize ||= Number(this.settings.pdfTextBoxFontSize) || 11;
+      state.textboxFontSize ||= Number(this.settings.pdfTextBoxFontSize) || 18;
+      state.textboxColor ||= String(this.settings.pdfTextBoxTextColor || "default");
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -6949,26 +6951,57 @@ class PaperLibraryPlugin extends Plugin {
         widths.appendChild(button);
       });
       palette.appendChild(widths);
-      const sizes = document.createElement("div");
-      sizes.className = "paperlib-native-pdf-sizes";
-      [9, 11, 13, 15, 18, 24].forEach((size) => {
+      const textboxPanel = document.createElement("div");
+      textboxPanel.className = "paperlib-native-pdf-textbox-panel";
+      const sizeRow = document.createElement("div");
+      sizeRow.className = "paperlib-native-pdf-size-row";
+      const sizeLabel = document.createElement("span");
+      sizeLabel.textContent = "字号";
+      const sizeInput = document.createElement("input");
+      sizeInput.type = "number";
+      sizeInput.min = "8";
+      sizeInput.max = "48";
+      sizeInput.step = "1";
+      sizeInput.className = "paperlib-native-pdf-size-input";
+      sizeInput.value = String(Number(state.textboxFontSize) || 18);
+      sizeInput.addEventListener("pointerdown", (event) => event.stopPropagation());
+      const commitSize = () => {
+        const value = Math.max(8, Math.min(48, Math.round(Number(sizeInput.value) || 18)));
+        sizeInput.value = String(value);
+        state.textboxFontSize = value;
+        this.settings.pdfTextBoxFontSize = value;
+        void this.saveSettings();
+      };
+      sizeInput.addEventListener("change", commitSize);
+      sizeInput.addEventListener("blur", commitSize);
+      sizeInput.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") { event.preventDefault(); commitSize(); sizeInput.blur(); }
+      });
+      sizeRow.appendChild(sizeLabel);
+      sizeRow.appendChild(sizeInput);
+      textboxPanel.appendChild(sizeRow);
+      const textColorRow = document.createElement("div");
+      textColorRow.className = "paperlib-native-pdf-text-colors";
+      PDF_TEXT_COLORS.forEach((color) => {
         const button = document.createElement("button");
-        button.className = "paperlib-native-pdf-size";
-        button.dataset.size = String(size);
-        button.textContent = String(size);
-        button.title = `字号 ${size}`;
-        button.setAttribute("aria-label", `文本框字号 ${size}`);
+        button.className = "paperlib-native-pdf-text-color";
+        button.dataset.textColor = color.id;
+        button.title = `文字颜色：${color.label}`;
+        button.setAttribute("aria-label", `文字颜色 ${color.label}`);
+        button.style.setProperty("--swatch-color", color.value);
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          state.textboxFontSize = size;
-          this.settings.pdfTextBoxFontSize = size;
+          state.textboxColor = color.id;
+          this.settings.pdfTextBoxTextColor = color.id;
           void this.saveSettings();
           this.updateNativePdfToolbarState(container, group, state);
         });
-        sizes.appendChild(button);
+        textColorRow.appendChild(button);
       });
-      palette.appendChild(sizes);
+      textboxPanel.appendChild(textColorRow);
+      palette.appendChild(textboxPanel);
       group.appendChild(palette);
       const ink = document.createElement("button");
       ink.className = "clickable-icon paperlib-native-pdf-tool is-ink";
@@ -7165,7 +7198,9 @@ class PaperLibraryPlugin extends Plugin {
                   width: 0.32
                 };
                 const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
-                void this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize);
+                void this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize, state.textboxColor);
+                state.paletteOpen = false;
+                this.updateNativePdfToolbarState(container, group, state);
               }
             }
             return;
@@ -7868,6 +7903,7 @@ class PaperLibraryPlugin extends Plugin {
     card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
     card.style.fontSize = `${this.getPdfTextBoxFontSize(mark)}px`;
     const content = document.createElement("div");
+    content.style.color = this.getPdfTextBoxTextColorValue(mark);
     content.className = "paperlib-pdf-textbox-content";
     content.setAttribute("contenteditable", "false");
     content.spellcheck = false;
@@ -7975,11 +8011,26 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   getPdfTextBoxFontSize(mark) {
-    const value = Number(mark?.fontSize) || Number(this.settings.pdfTextBoxFontSize) || 11;
-    return Math.max(8, Math.min(24, value));
+    const value = Number(mark?.fontSize) || Number(this.settings.pdfTextBoxFontSize) || 18;
+    return Math.max(8, Math.min(48, value));
   }
 
-  async createPdfTextBox(paper, file, pageNumber, box, fontSize = null) {
+  getPdfTextBoxTextColorValue(mark) {
+    const id = String(mark?.textColor || this.settings.pdfTextBoxTextColor || "default");
+    return (PDF_TEXT_COLORS.find((color) => color.id === id) || PDF_TEXT_COLORS[0]).value;
+  }
+
+  pdfTextColorOperator(mark) {
+    const id = String(mark?.textColor || this.settings.pdfTextBoxTextColor || "default");
+    if (id === "default") return "0 g";
+    const hex = String((PDF_TEXT_COLORS.find((color) => color.id === id) || {}).value || "#000000").replace("#", "");
+    const red = parseInt(hex.slice(0, 2), 16) / 255;
+    const green = parseInt(hex.slice(2, 4), 16) / 255;
+    const blue = parseInt(hex.slice(4, 6), 16) / 255;
+    return `${red.toFixed(3)} ${green.toFixed(3)} ${blue.toFixed(3)} rg`;
+  }
+
+  async createPdfTextBox(paper, file, pageNumber, box, fontSize = null, textColor = "default") {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !file?.path || !pageNumber) return null;
     const id = workspaceId("textbox");
@@ -7992,7 +8043,8 @@ class PaperLibraryPlugin extends Plugin {
       selection: { beginIndex: -1, beginOffset: -1, endIndex: -1, endOffset: -1 },
       selectionSource: "textbox",
       rectCoordinateSpace: "page-relative",
-      fontSize: Math.max(8, Math.min(24, Number(fontSize) || Number(this.settings.pdfTextBoxFontSize) || 11)),
+      fontSize: Math.max(8, Math.min(48, Number(fontSize) || Number(this.settings.pdfTextBoxFontSize) || 18)),
+      textColor: PDF_TEXT_COLORS.some((color) => color.id === textColor) ? textColor : "default",
       color: "yellow",
       pdfSubtype: "FreeText",
       box: { x: box.x, y: box.y, width: box.width || 0.02 },
@@ -8027,7 +8079,7 @@ class PaperLibraryPlugin extends Plugin {
     if (typeof changes.comment === "string") mark.comment = changes.comment;
     if (changes.box) mark.box = { ...(mark.box || {}), ...changes.box };
     if (Number.isFinite(Number(changes.fontSize))) {
-      mark.fontSize = Math.max(8, Math.min(24, Number(changes.fontSize)));
+      mark.fontSize = Math.max(8, Math.min(48, Number(changes.fontSize)));
     }
     mark.updatedAt = new Date().toISOString();
     await this.saveSettings();
@@ -8408,8 +8460,12 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
       button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 4));
     });
-    group.querySelectorAll(".paperlib-native-pdf-size").forEach((button) => {
-      button.classList.toggle("is-active", Number(button.dataset.size) === Number(state.textboxFontSize || 11));
+    const sizeInput = group.querySelector(".paperlib-native-pdf-size-input");
+    if (sizeInput && container.ownerDocument?.activeElement !== sizeInput) {
+      sizeInput.value = String(Number(state.textboxFontSize) || 18);
+    }
+    group.querySelectorAll(".paperlib-native-pdf-text-color").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.textColor === (state.textboxColor || "default"));
     });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
       "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline", "textbox"].includes(state.mode))
@@ -13064,7 +13120,7 @@ class PaperLibraryPlugin extends Plugin {
         P: page.ref
       };
       if (subtype === "FreeText") {
-        values.DA = PDFString.of(`/Helvetica ${this.getPdfTextBoxFontSize(mark)} Tf 0 g`);
+        values.DA = PDFString.of(`/Helvetica ${this.getPdfTextBoxFontSize(mark)} Tf ${this.pdfTextColorOperator(mark)}`);
         values.Border = [0, 0, 1];
       }
       if (subtype === "Highlight") {
