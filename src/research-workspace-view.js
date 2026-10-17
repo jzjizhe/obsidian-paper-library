@@ -256,8 +256,9 @@ class PaperResearchWorkspaceView extends ItemView {
     }, `${this.toolMode === "ai-region" ? "is-active" : ""} paperlib-ai-region-tool`);
     const paletteColorId = this.toolMode === "ink" ? this.inkColor : this.highlightColor;
     const palette = modeGroup.createDiv({ cls: `paperlib-highlight-palette ${this.colorPaletteOpen && ["highlight", "ink", "underline"].includes(this.toolMode) ? "is-visible" : ""}` });
+    const colorsColumn = palette.createDiv({ cls: "paperlib-pdf-palette-colors" });
     CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
-      const swatch = palette.createEl("button", {
+      const swatch = colorsColumn.createEl("button", {
         cls: `paperlib-highlight-swatch ${paletteColorId === color.id ? "is-active" : ""}`,
         attr: { "aria-label": `${color.label}${this.toolMode === "ink" ? "画笔" : "荧光笔"}颜色`, title: color.label }
       });

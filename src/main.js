@@ -6904,6 +6904,9 @@ class PaperLibraryPlugin extends Plugin {
       group.appendChild(underline);
       const palette = document.createElement("div");
       palette.className = "paperlib-native-pdf-palette";
+      const colorsColumn = document.createElement("div");
+      colorsColumn.className = "paperlib-native-pdf-colors";
+      palette.appendChild(colorsColumn);
       CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
         const swatch = document.createElement("button");
         swatch.className = "paperlib-native-pdf-swatch";
@@ -6920,7 +6923,7 @@ class PaperLibraryPlugin extends Plugin {
           state.paletteOpen = false;
           this.updateNativePdfToolbarState(container, group, state);
         });
-        palette.appendChild(swatch);
+        colorsColumn.appendChild(swatch);
       });
       const widths = document.createElement("div");
       widths.className = "paperlib-native-pdf-widths";
@@ -12978,11 +12981,18 @@ class PaperLibraryPlugin extends Plugin {
     });
     const target = `${pdfPath}#page=${page}&selection=${selectionValue}&color=${normalizedColor}`;
     if (existing) {
-      // 颜色与类型都相同才视为无变化；只改类型（如高亮→下划线）也要更新
-      if (existing.color === normalizedColor && (existing.pdfSubtype || "Highlight") === pdfSubtype) return false;
+      // 颜色、类型、几何范围都相同才视为无变化；扩大/缩小选区或改类型都要更新
+      const existingUnion = this.getPdfRectsUnion(existing.pdfRects);
+      const sameGeometry = Boolean(selectionUnion && existingUnion
+        && this.pdfRectsClose(selectionUnion, existingUnion, 0.5));
+      if (existing.color === normalizedColor
+        && (existing.pdfSubtype || "Highlight") === pdfSubtype
+        && sameGeometry) return false;
       existing.color = normalizedColor;
       existing.pdfSubtype = pdfSubtype;
       existing.link = target;
+      existing.text = text;
+      existing.selection = { ...range };
       if (Array.isArray(context.pdfRects) && context.pdfRects.length) {
         existing.pdfRects = context.pdfRects.map((item) => ({ ...item }));
       }

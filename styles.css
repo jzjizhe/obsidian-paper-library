@@ -8191,9 +8191,11 @@ button.paperlib-file-open {
   z-index: 4;
   top: 38px;
   right: 44px;
-  flex-direction: column;
-  gap: 5px;
-  width: 38px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto;
+  min-width: 38px;
   padding: 7px;
   visibility: hidden;
   overflow: visible;
@@ -9904,9 +9906,9 @@ button.paperlib-file-open {
   top: 0;
   right: calc(100% + 8px);
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
   padding: 7px 8px;
   visibility: hidden;
   border: 1px solid var(--background-modifier-border);
@@ -14633,14 +14635,23 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   transition: background-color 140ms ease;
 }
 
-/* 画笔粗细选择器（原生 + 画布） */
+/* 画笔粗细选择器（原生 + 画布）：与颜色列并排的第二列 */
+.paperlib-native-pdf-colors,
+.paperlib-pdf-palette-colors {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
 .paperlib-native-pdf-widths,
 .paperlib-ink-widths {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px 2px;
-  border-top: 1px solid var(--background-modifier-border);
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--background-modifier-border);
 }
 
 .paperlib-native-pdf-widths {
