@@ -890,6 +890,8 @@ class PaperLibraryPlugin extends Plugin {
     this.dismissNativePdfSelectionToolbar();
     this.nativeInkDrawingCleanup?.(true);
     this.nativeInkDrawingCleanup = null;
+    this.nativeShapeDrawingCleanup?.(true);
+    this.nativeShapeDrawingCleanup = null;
     this.pdfInkRegionDragCleanup?.(true);
     this.pdfInkRegionDragCleanup = null;
     this.pdfInkContextMenuCleanup?.();
@@ -910,9 +912,9 @@ class PaperLibraryPlugin extends Plugin {
     document.querySelectorAll(".paperlib-native-pdf-tools").forEach((element) => element.remove());
     document.querySelectorAll(".paperlib-pdf-figure-drag-zone, .paperlib-pdf-figure-drag-preview")
       .forEach((element) => element.remove());
-    document.querySelectorAll(".paperlib-native-highlight-mode, .paperlib-native-note-mode, .paperlib-native-ai-region-mode, .paperlib-native-ink-mode")
+    document.querySelectorAll(".paperlib-native-highlight-mode, .paperlib-native-note-mode, .paperlib-native-ai-region-mode, .paperlib-native-ink-mode, .paperlib-native-shape-mode")
       .forEach((element) => element.classList.remove(
-        "paperlib-native-highlight-mode", "paperlib-native-note-mode", "paperlib-native-ai-region-mode", "paperlib-native-ink-mode"
+        "paperlib-native-highlight-mode", "paperlib-native-note-mode", "paperlib-native-ai-region-mode", "paperlib-native-ink-mode", "paperlib-native-shape-mode"
       ));
     document.querySelectorAll(".paperlib-native-pdf-ink-layer").forEach((element) => element.remove());
     document.querySelectorAll(".paperlib-native-pdf-host")
@@ -6869,7 +6871,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), shapeType: "line", shapeColor: "yellow", shapeWidth: 2.5, paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6888,6 +6890,7 @@ class PaperLibraryPlugin extends Plugin {
         });
         this.updateNativePdfToolbarState(container, existingGroup, existingState);
         this.renderNativePdfInkOverlays(leaf, container);
+        this.renderNativePdfShapeOverlays(leaf, container);
         void this.renderNativePdfHighlightOverlays(leaf, container);
         void this.renderNativePdfNoteOverlays(leaf, container);
         this.renderNativePdfTextBoxes(leaf, container);
@@ -6896,13 +6899,16 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), shapeType: "line", shapeColor: "yellow", shapeWidth: 2.5, paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
       state.inkWidth ||= 4;
       state.textboxFontSize ||= Number(this.settings.pdfTextBoxFontSize) || 18;
       state.textboxColor ||= String(this.settings.pdfTextBoxTextColor || "orange");
+      state.shapeType ||= "line";
+      state.shapeColor ||= "yellow";
+      state.shapeWidth ||= 2.5;
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -6932,6 +6938,30 @@ class PaperLibraryPlugin extends Plugin {
       group.appendChild(underline);
       const palette = document.createElement("div");
       palette.className = "paperlib-native-pdf-palette";
+      const shapesColumn = document.createElement("div");
+      shapesColumn.className = "paperlib-native-pdf-shapes";
+      [
+        { id: "line", label: "直线", icon: "minus" },
+        { id: "arrow", label: "箭头", icon: "move-up-right" },
+        { id: "circle", label: "圆", icon: "circle" },
+        { id: "ellipse", label: "椭圆", icon: "ellipse" },
+        { id: "rect", label: "矩形", icon: "square" }
+      ].forEach((tool) => {
+        const button = document.createElement("button");
+        button.className = "clickable-icon paperlib-native-pdf-shape-tool";
+        button.dataset.shape = tool.id;
+        button.title = tool.label;
+        button.setAttribute("aria-label", tool.label);
+        setPaperlibIcon(button, tool.icon);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.shapeType = tool.id;
+          this.updateNativePdfToolbarState(container, group, state);
+        });
+        shapesColumn.appendChild(button);
+      });
+      palette.appendChild(shapesColumn);
       const colorsColumn = document.createElement("div");
       colorsColumn.className = "paperlib-native-pdf-colors";
       palette.appendChild(colorsColumn);
@@ -6946,9 +6976,10 @@ class PaperLibraryPlugin extends Plugin {
           event.preventDefault();
           event.stopPropagation();
           if (state.mode === "ink") state.inkColor = color.id;
+          else if (state.mode === "shape") state.shapeColor = color.id;
           else state.highlightColor = color.id;
-          if (!["highlight", "ink"].includes(state.mode)) state.mode = "highlight";
-          state.paletteOpen = false;
+          if (!["highlight", "ink", "shape"].includes(state.mode)) state.mode = "highlight";
+          if (state.mode !== "shape") state.paletteOpen = false;
           this.updateNativePdfToolbarState(container, group, state);
         });
         colorsColumn.appendChild(swatch);
@@ -6968,7 +6999,8 @@ class PaperLibraryPlugin extends Plugin {
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          state.inkWidth = width;
+          if (state.mode === "shape") state.shapeWidth = width;
+          else state.inkWidth = width;
           this.updateNativePdfToolbarState(container, group, state);
         });
         widths.appendChild(button);
@@ -7050,6 +7082,20 @@ class PaperLibraryPlugin extends Plugin {
         state.paletteOpen = wasActive ? !state.paletteOpen : true;
         this.updateNativePdfToolbarState(container, group, state);
       });
+      const shapes = document.createElement("button");
+      shapes.className = "clickable-icon paperlib-native-pdf-tool is-shapes";
+      shapes.title = "形状";
+      shapes.setAttribute("aria-label", "形状");
+      setPaperlibIcon(shapes, "shapes");
+      group.appendChild(shapes);
+      shapes.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const wasActive = state.mode === "shape";
+        state.mode = "shape";
+        state.paletteOpen = wasActive ? !state.paletteOpen : true;
+        this.updateNativePdfToolbarState(container, group, state);
+      });
       const askRegion = document.createElement("button");
       askRegion.className = "clickable-icon paperlib-native-pdf-tool is-ai-region";
       askRegion.title = "圈选区域 Ask AI";
@@ -7113,7 +7159,10 @@ class PaperLibraryPlugin extends Plugin {
           normalizePath(mark.pdfPath || paper.pdfPath || "") === path
           && (mark.pdfSubtype === "FreeText" ? Boolean(mark.box) : Array.isArray(mark.pdfRects) && mark.pdfRects.length)
         )).length;
-        const total = highlightCount + annotationCount;
+        const shapeCount = (workspace.pdfShapes || []).filter((shape) => (
+          normalizePath(shape.pdfPath || paper.pdfPath || "") === path
+        )).length;
+        const total = highlightCount + annotationCount + shapeCount;
         if (!total) return new Notice("本文没有标注");
         new ClearAnnotationsModal(this.app, this, paper, path, total).open();
       });
@@ -7165,6 +7214,7 @@ class PaperLibraryPlugin extends Plugin {
       container.appendChild(group);
       this.updateNativePdfToolbarState(container, group, state);
       this.renderNativePdfInkOverlays(leaf, container, true);
+      this.renderNativePdfShapeOverlays(leaf, container, true);
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
       void this.renderNativePdfNoteOverlays(leaf, container, true);
       this.renderNativePdfTextBoxes(leaf, container, true);
@@ -7232,9 +7282,13 @@ class PaperLibraryPlugin extends Plugin {
             this.updateNativePdfToolbarState(container, group, state);
             return;
           }
+          if (active?.mode === "shape") {
+            if (pageEl && container.contains(pageEl)) this.beginNativePdfShape(event, leaf, container, pageEl, active);
+            return;
+          }
           if (active?.mode === "eraser") {
             if (pageEl && container.contains(pageEl)) {
-              active.erasing = { highlights: new Map(), strokes: new Map() };
+              active.erasing = { highlights: new Map(), strokes: new Map(), shapes: new Map() };
               void this.collectNativePdfEraseTargets(event, leaf, container, active);
             }
             return;
@@ -7300,6 +7354,7 @@ class PaperLibraryPlugin extends Plugin {
           if (!activeLeaf && !container.contains(event.target)) return;
           const active = this.nativePdfStates.get(container);
           if (!active || (!active.mode && !active.paletteOpen)) return;
+          this.nativeShapeDrawingCleanup?.();
           active.mode = "";
           active.paletteOpen = false;
           active.erasing = null;
@@ -7541,6 +7596,127 @@ class PaperLibraryPlugin extends Plugin {
     svg.setAttribute("preserveAspectRatio", "none");
     pageEl.appendChild(svg);
     return svg;
+  }
+
+  appendNativePdfShape(svg, shape, pageEl, pending = false) {
+    if (!svg || !shape?.start || !shape?.end) return null;
+    const color = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === shape.color) || CANVAS_HIGHLIGHT_COLORS[0];
+    const width = Math.max(1.5, Math.min(8, Number(shape.width) || 2.5));
+    const type = ["line", "arrow", "circle", "ellipse", "rect"].includes(shape.type) ? shape.type : "line";
+    const x1 = Math.max(0, Math.min(1, Number(shape.start.x) || 0)) * 1000;
+    const y1 = Math.max(0, Math.min(1, Number(shape.start.y) || 0)) * 1000;
+    const x2 = Math.max(0, Math.min(1, Number(shape.end.x) || 0)) * 1000;
+    const y2 = Math.max(0, Math.min(1, Number(shape.end.y) || 0)) * 1000;
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", `paperlib-pdf-shape${pending ? " is-pending" : ""}`);
+    group.dataset.shapeId = shape.id || "";
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const boxWidth = Math.abs(x2 - x1);
+    const boxHeight = Math.abs(y2 - y1);
+    if (type === "rect" || type === "ellipse" || type === "circle") {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", type === "rect" ? "rect" : "ellipse");
+      if (type !== "rect") {
+        node.setAttribute("cx", String(left + boxWidth / 2));
+        node.setAttribute("cy", String(top + boxHeight / 2));
+        node.setAttribute("rx", String(boxWidth / 2));
+        node.setAttribute("ry", String(boxHeight / 2));
+      } else {
+        node.setAttribute("x", String(left));
+        node.setAttribute("y", String(top));
+        node.setAttribute("width", String(boxWidth));
+        node.setAttribute("height", String(boxHeight));
+      }
+      node.setAttribute("fill", "none");
+      node.setAttribute("stroke", color.value);
+      node.setAttribute("stroke-width", String(width));
+      node.setAttribute("vector-effect", "non-scaling-stroke");
+      group.appendChild(node);
+    } else {
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(x1));
+      line.setAttribute("y1", String(y1));
+      line.setAttribute("x2", String(x2));
+      line.setAttribute("y2", String(y2));
+      line.setAttribute("stroke", color.value);
+      line.setAttribute("stroke-width", String(width));
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("vector-effect", "non-scaling-stroke");
+      group.appendChild(line);
+      if (type === "arrow") {
+        const bounds = pageEl?.getBoundingClientRect?.();
+        const pageWidth = Math.max(1, bounds?.width || 1);
+        const pageHeight = Math.max(1, bounds?.height || 1);
+        const dx = (x2 - x1) / 1000 * pageWidth;
+        const dy = (y2 - y1) / 1000 * pageHeight;
+        const length = Math.hypot(dx, dy);
+        if (length > 2) {
+          const ux = dx / length;
+          const uy = dy / length;
+          const size = Math.max(7, width * 3.5);
+          const half = size * 0.42;
+          const baseX = x2 - ux * size / pageWidth * 1000;
+          const baseY = y2 - uy * size / pageHeight * 1000;
+          const leftX = baseX - uy * half / pageWidth * 1000;
+          const leftY = baseY + ux * half / pageHeight * 1000;
+          const rightX = baseX + uy * half / pageWidth * 1000;
+          const rightY = baseY - ux * half / pageHeight * 1000;
+          const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          head.setAttribute("points", `${x2},${y2} ${leftX},${leftY} ${rightX},${rightY}`);
+          head.setAttribute("fill", color.value);
+          head.setAttribute("stroke", "none");
+          group.appendChild(head);
+        }
+      }
+    }
+    svg.appendChild(group);
+    return group;
+  }
+
+  ensureNativePdfShapeLayer(pageEl) {
+    let svg = pageEl.querySelector(":scope > .paperlib-native-pdf-shape-layer");
+    if (svg) return svg;
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "paperlib-native-pdf-shape-layer");
+    svg.setAttribute("viewBox", "0 0 1000 1000");
+    svg.setAttribute("preserveAspectRatio", "none");
+    pageEl.appendChild(svg);
+    return svg;
+  }
+
+  renderNativePdfShapeOverlays(leaf, container, force = false) {
+    const file = leaf?.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    if (!file?.path || !paper) {
+      container?.querySelectorAll?.(".paperlib-native-pdf-shape-layer")?.forEach?.((element) => element.remove());
+      return;
+    }
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+      const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+      if (!pageNumber) return;
+      const shapes = this.getPdfShapes(paper, file.path, pageNumber);
+      const signature = shapes.map((shape) => (
+        `${shape.id}:${shape.type}:${shape.color}:${shape.width}:${shape.start?.x || 0}:${shape.start?.y || 0}:${shape.end?.x || 0}:${shape.end?.y || 0}`
+      )).join("|");
+      const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-shape-layer");
+      if (!force && existing?.dataset.signature === signature) return;
+      if (!shapes.length && !existing) return;
+      const svg = existing || this.ensureNativePdfShapeLayer(pageEl);
+      svg.replaceChildren();
+      svg.dataset.signature = signature;
+      shapes.forEach((shape) => this.appendNativePdfShape(svg, shape, pageEl));
+    });
+  }
+
+  refreshNativePdfShapeOverlays(paper) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !this.app.workspace?.getLeavesOfType) return;
+    this.app.workspace.getLeavesOfType("pdf").forEach((leaf) => {
+      const file = leaf.view?.file;
+      const container = leaf.view?.containerEl;
+      if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
+      this.renderNativePdfShapeOverlays(leaf, container, true);
+    });
   }
 
   renderNativePdfInkOverlays(leaf, container, force = false) {
@@ -8388,6 +8564,103 @@ class PaperLibraryPlugin extends Plugin {
     window.addEventListener("pointercancel", cancelStroke, true);
   }
 
+  constrainPdfShapeEnd(start, end, bounds, type, constrain) {
+    if (!bounds?.width || !bounds?.height) return end;
+    // 圆始终按等宽高绘制；直线/箭头/椭圆/矩形只在按住 Shift 时约束
+    if (!constrain && type !== "circle") return end;
+    const pageWidth = Math.max(1, bounds.width);
+    const pageHeight = Math.max(1, bounds.height);
+    let dx = (end.x - start.x) * pageWidth;
+    let dy = (end.y - start.y) * pageHeight;
+    if (type === "line" || type === "arrow") {
+      const length = Math.hypot(dx, dy);
+      if (!length) return end;
+      const step = Math.PI / 4;
+      const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+      dx = Math.cos(angle) * length;
+      dy = Math.sin(angle) * length;
+    } else {
+      const size = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = (dx < 0 ? -1 : 1) * size;
+      dy = (dy < 0 ? -1 : 1) * size;
+    }
+    return {
+      x: Math.max(0, Math.min(1, start.x + dx / pageWidth)),
+      y: Math.max(0, Math.min(1, start.y + dy / pageHeight))
+    };
+  }
+
+  beginNativePdfShape(event, leaf, container, pageEl, state) {
+    if (event.button !== 0) return;
+    const file = leaf.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    if (!file?.path || !paper) return new Notice("请先把这个文档加入论文库");
+    const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+    const bounds = pageEl.getBoundingClientRect();
+    if (!pageNumber || !bounds.width || !bounds.height) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.nativeShapeDrawingCleanup?.(true);
+    state.busy = true;
+    const type = ["line", "arrow", "circle", "ellipse", "rect"].includes(state.shapeType) ? state.shapeType : "line";
+    const point = (pointer) => ({
+      x: Math.max(0, Math.min(1, (pointer.clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (pointer.clientY - bounds.top) / bounds.height))
+    });
+    const start = point(event);
+    let end = { ...start };
+    const shape = {
+      type,
+      page: pageNumber,
+      pdfPath: file.path,
+      color: state.shapeColor || "yellow",
+      width: Number(state.shapeWidth) || 2.5
+    };
+    const preview = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    preview.setAttribute("class", "paperlib-native-pdf-shape-preview");
+    preview.setAttribute("viewBox", "0 0 1000 1000");
+    preview.setAttribute("preserveAspectRatio", "none");
+    pageEl.appendChild(preview);
+    const render = (constrain) => {
+      const constrained = this.constrainPdfShapeEnd(start, end, bounds, type, constrain);
+      preview.replaceChildren();
+      this.appendNativePdfShape(preview, { ...shape, start, end: constrained }, pageEl, true);
+    };
+    render(false);
+    const move = (moveEvent) => {
+      moveEvent.preventDefault();
+      end = point(moveEvent);
+      render(moveEvent.shiftKey);
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", cancelShape, true);
+      preview.remove();
+      if (this.nativeShapeDrawingCleanup === cleanup) this.nativeShapeDrawingCleanup = null;
+      state.busy = false;
+    };
+    const cancelShape = () => cleanup();
+    const up = (upEvent) => {
+      upEvent.preventDefault();
+      upEvent.stopPropagation();
+      end = point(upEvent);
+      const resolved = this.constrainPdfShapeEnd(start, end, bounds, type, upEvent.shiftKey);
+      const horizontal = (resolved.x - start.x) * bounds.width;
+      const vertical = (resolved.y - start.y) * bounds.height;
+      const tiny = type === "line" || type === "arrow"
+        ? Math.hypot(horizontal, vertical) < 4
+        : Math.max(Math.abs(horizontal), Math.abs(vertical)) < 4;
+      cleanup();
+      if (tiny) return;
+      void this.savePdfShape(paper, { ...shape, start, end: resolved });
+    };
+    this.nativeShapeDrawingCleanup = cleanup;
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", cancelShape, true);
+  }
+
   beginNativePdfAIRegion(event, leaf, container, pageEl) {
     if (event.button !== 0) return;
     const canvas = pageEl.querySelector(".canvasWrapper canvas, canvas");
@@ -8496,9 +8769,13 @@ class PaperLibraryPlugin extends Plugin {
   updateNativePdfToolbarState(container, group, state) {
     state.highlightColor ||= state.color || "yellow";
     state.inkColor ||= state.color || "yellow";
+    state.shapeType ||= "line";
+    state.shapeColor ||= "yellow";
+    state.shapeWidth ||= 2.5;
     const highlightColor = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === state.highlightColor) || CANVAS_HIGHLIGHT_COLORS[0];
     const inkColor = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === state.inkColor) || CANVAS_HIGHLIGHT_COLORS[0];
-    const paletteColor = state.mode === "ink" ? inkColor : highlightColor;
+    const shapeColor = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === state.shapeColor) || CANVAS_HIGHLIGHT_COLORS[0];
+    const paletteColor = state.mode === "ink" ? inkColor : state.mode === "shape" ? shapeColor : highlightColor;
     group.style.setProperty("--paperlib-native-highlight", highlightColor.value);
     container.style.setProperty("--paperlib-native-highlight", highlightColor.value);
     container.style.setProperty("--paperlib-native-highlighter-cursor", highlighterCursor(highlightColor.value));
@@ -8510,10 +8787,15 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-textbox")?.classList.toggle("is-active", state.mode === "textbox");
+    group.querySelector(".is-shapes")?.classList.toggle("is-active", state.mode === "shape");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
+    const activeWidth = state.mode === "shape" ? state.shapeWidth : state.inkWidth;
     group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
-      button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 4));
+      button.classList.toggle("is-active", Number(button.dataset.width) === Number(activeWidth || 4));
+    });
+    group.querySelectorAll(".paperlib-native-pdf-shape-tool").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.shape === (state.shapeType || "line"));
     });
     const sizeInput = group.querySelector(".paperlib-native-pdf-size-input");
     if (sizeInput && container.ownerDocument?.activeElement !== sizeInput) {
@@ -8523,7 +8805,7 @@ class PaperLibraryPlugin extends Plugin {
       button.classList.toggle("is-active", button.dataset.textColor === (state.textboxColor || "orange"));
     });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
-      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline", "textbox"].includes(state.mode))
+      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline", "textbox", "shape"].includes(state.mode))
     );
     group.querySelectorAll(".paperlib-native-pdf-swatch").forEach((swatch) => {
       swatch.classList.toggle("is-active", swatch.dataset.color === paletteColor.id);
@@ -8531,6 +8813,7 @@ class PaperLibraryPlugin extends Plugin {
     container.classList.toggle("paperlib-native-highlight-mode", state.mode === "highlight");
     container.classList.toggle("paperlib-native-underline-mode", state.mode === "underline");
     container.classList.toggle("paperlib-native-textbox-mode", state.mode === "textbox");
+    container.classList.toggle("paperlib-native-shape-mode", state.mode === "shape");
     container.classList.toggle("paperlib-native-ink-mode", state.mode === "ink");
     container.classList.toggle("paperlib-native-note-mode", state.mode === "note");
     container.classList.toggle("paperlib-native-ai-region-mode", state.mode === "ai-region");
@@ -8750,6 +9033,20 @@ class PaperLibraryPlugin extends Plugin {
       menu.showAtMouseEvent(event);
       return;
     }
+    const shape = !selectedValue && directPage && container.contains(directPage) && directFile && directPaper
+      ? this.findPdfShapeAtEvent(event, directPage, directPaper, directFile.path, directPageNumber)
+      : null;
+    if (shape) {
+      event.preventDefault();
+      event.stopPropagation();
+      const menu = new Menu();
+      menu.addItem((item) => item
+        .setTitle("删除此形状")
+        .setIcon("trash-2")
+        .onClick(() => this.removePdfShape(directPaper, shape.id)));
+      menu.showAtMouseEvent(event);
+      return;
+    }
     const selectionElement = activeSelection?.anchorNode?.nodeType === 3
       ? activeSelection.anchorNode.parentElement
       : activeSelection?.anchorNode;
@@ -8879,6 +9176,8 @@ class PaperLibraryPlugin extends Plugin {
     const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
     const stroke = this.findPdfInkStrokeAtEvent(event, pageEl, paper, file.path, pageNumber);
     if (stroke) state.erasing.strokes.set(stroke.id, stroke);
+    const shape = this.findPdfShapeAtEvent(event, pageEl, paper, file.path, pageNumber);
+    if (shape) state.erasing.shapes?.set(shape.id, shape);
   }
 
   async finishNativePdfErase(leaf, container, state) {
@@ -8901,7 +9200,10 @@ class PaperLibraryPlugin extends Plugin {
     for (const id of session.strokes.keys()) {
       await this.removePdfInkStroke(paper, id);
     }
-    const removed = entries.length + session.strokes.size;
+    for (const id of (session.shapes?.keys?.() || [])) {
+      await this.removePdfShape(paper, id);
+    }
+    const removed = entries.length + session.strokes.size + (session.shapes?.size || 0);
     if (removed) new Notice(`已擦除 ${removed} 处标注`);
   }
 
@@ -8917,8 +9219,11 @@ class PaperLibraryPlugin extends Plugin {
       normalizePath(mark.pdfPath || paper.pdfPath || "") === path
       && (mark.pdfSubtype === "FreeText" ? Boolean(mark.box) : Array.isArray(mark.pdfRects) && mark.pdfRects.length)
     ));
+    const shapes = (workspace.pdfShapes || []).filter((shape) => (
+      normalizePath(shape.pdfPath || paper.pdfPath || "") === path
+    ));
     const records = [...highlights, ...annotations];
-    if (!records.length) return 0;
+    if (!records.length && !shapes.length) return 0;
     if (highlights.length) {
       const ids = new Set(highlights.map((mark) => mark.id));
       workspace.highlights = (workspace.highlights || []).filter((mark) => !ids.has(mark.id));
@@ -8936,6 +9241,11 @@ class PaperLibraryPlugin extends Plugin {
         await this.app.vault.modify(noteFile, content);
       }
     }
+    if (shapes.length) {
+      const ids = new Set(shapes.map((shape) => shape.id));
+      workspace.pdfShapes = (workspace.pdfShapes || []).filter((shape) => !ids.has(shape.id));
+      await this.persistResearchWorkspace(paper, false);
+    }
     try {
       await this.removeLocalPdfAnnotations(records);
     } catch (error) {
@@ -8944,8 +9254,9 @@ class PaperLibraryPlugin extends Plugin {
     this.refreshResearchPdfHighlights(paper);
     this.refreshNativePdfNoteOverlays(paper);
     this.refreshNativePdfTextBoxes(paper);
+    this.refreshNativePdfShapeOverlays(paper);
     this.refreshViews();
-    return records.length;
+    return records.length + shapes.length;
   }
 
   showNativePdfMarkDeleteMenu(event, paper, marks) {
@@ -13010,6 +13321,7 @@ class PaperLibraryPlugin extends Plugin {
       ...(Array.isArray(paper.annotations) ? paper.annotations : []),
       ...(Array.isArray(workspace.highlights) ? workspace.highlights : []),
       ...(Array.isArray(workspace.inkStrokes) ? workspace.inkStrokes : []),
+      ...(Array.isArray(workspace.pdfShapes) ? workspace.pdfShapes : []),
       ...(Array.isArray(workspace.nodes) ? workspace.nodes : [])
     ];
   }
@@ -13786,6 +14098,105 @@ class PaperLibraryPlugin extends Plugin {
     return true;
   }
 
+  getPdfShapes(paper, pdfPath = paper?.pdfPath, page = null) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return [];
+    this.repairOrphanedPaperPdfMarkPaths(paper);
+    const path = normalizePath(pdfPath || paper.pdfPath || "");
+    return (this.ensureResearchWorkspace(paper).pdfShapes || []).filter((shape) => (
+      normalizePath(shape.pdfPath || paper.pdfPath || "") === path
+      && (page == null || Number(shape.page) === Number(page))
+    ));
+  }
+
+  async savePdfShape(paper, source = {}) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !source.start || !source.end) return false;
+    const workspace = this.ensureResearchWorkspace(paper);
+    const clampPoint = (point) => ({
+      x: Math.max(0, Math.min(1, Number(point?.x) || 0)),
+      y: Math.max(0, Math.min(1, Number(point?.y) || 0))
+    });
+    const shape = {
+      id: source.id || workspaceId("shape"),
+      type: ["line", "arrow", "circle", "ellipse", "rect"].includes(source.type) ? source.type : "line",
+      page: Math.max(1, Number(source.page) || 1),
+      pdfPath: normalizePath(source.pdfPath || paper.pdfPath || ""),
+      color: CANVAS_HIGHLIGHT_COLORS.some((item) => item.id === source.color) ? source.color : "yellow",
+      width: Math.max(1.5, Math.min(8, Number(source.width) || 2.5)),
+      start: clampPoint(source.start),
+      end: clampPoint(source.end),
+      createdAt: source.createdAt || new Date().toISOString()
+    };
+    const index = workspace.pdfShapes.findIndex((item) => item.id === shape.id);
+    if (index >= 0) workspace.pdfShapes[index] = shape;
+    else workspace.pdfShapes.push(shape);
+    await this.persistResearchWorkspace(paper, false);
+    this.refreshNativePdfShapeOverlays(paper);
+    return true;
+  }
+
+  async removePdfShape(paper, shapeId) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !shapeId) return false;
+    const workspace = this.ensureResearchWorkspace(paper);
+    const before = workspace.pdfShapes.length;
+    workspace.pdfShapes = workspace.pdfShapes.filter((shape) => shape.id !== shapeId);
+    if (workspace.pdfShapes.length === before) return false;
+    await this.persistResearchWorkspace(paper, false);
+    this.refreshNativePdfShapeOverlays(paper);
+    new Notice("已删除形状");
+    return true;
+  }
+
+  pdfShapeHitTest(shape, point, rect) {
+    if (!shape || !point || !rect?.width || !rect?.height) return false;
+    const start = shape.start || {};
+    const end = shape.end || {};
+    const x1 = Math.max(0, Math.min(1, Number(start.x) || 0));
+    const y1 = Math.max(0, Math.min(1, Number(start.y) || 0));
+    const x2 = Math.max(0, Math.min(1, Number(end.x) || 0));
+    const y2 = Math.max(0, Math.min(1, Number(end.y) || 0));
+    const type = ["line", "arrow", "circle", "ellipse", "rect"].includes(shape.type) ? shape.type : "line";
+    if (type === "line" || type === "arrow") {
+      const distance = this.pdfInkPointSegmentDistance(
+        { x: point.x * rect.width, y: point.y * rect.height },
+        { x: x1 * rect.width, y: y1 * rect.height },
+        { x: x2 * rect.width, y: y2 * rect.height }
+      );
+      return distance <= Math.max(8, (Number(shape.width) || 2.5) + 4);
+    }
+    const left = Math.min(x1, x2);
+    const right = Math.max(x1, x2);
+    const top = Math.min(y1, y2);
+    const bottom = Math.max(y1, y2);
+    if (type === "rect") {
+      const padX = 6 / rect.width;
+      const padY = 6 / rect.height;
+      return point.x >= left - padX && point.x <= right + padX
+        && point.y >= top - padY && point.y <= bottom + padY;
+    }
+    const centerX = (left + right) / 2;
+    const centerY = (top + bottom) / 2;
+    const radiusX = Math.max(0.0001, (right - left) / 2);
+    const radiusY = Math.max(0.0001, (bottom - top) / 2);
+    const value = ((point.x - centerX) / radiusX) ** 2 + ((point.y - centerY) / radiusY) ** 2;
+    return value <= 1.1;
+  }
+
+  findPdfShapeAtEvent(event, pageEl, paper, pdfPath, pageNumber) {
+    const rect = pageEl?.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) return null;
+    const point = {
+      x: (event.clientX - rect.left) / rect.width,
+      y: (event.clientY - rect.top) / rect.height
+    };
+    return this.getPdfShapes(paper, pdfPath, pageNumber)
+      .slice()
+      .reverse()
+      .find((shape) => this.pdfShapeHitTest(shape, point, rect)) || null;
+  }
+
   pdfInkPointSegmentDistance(point, first, second) {
     const dx = Number(second.x) - Number(first.x);
     const dy = Number(second.y) - Number(first.y);
@@ -14062,7 +14473,7 @@ class PaperLibraryPlugin extends Plugin {
   ensureResearchWorkspace(paper) {
     if (!paper.researchWorkspace || typeof paper.researchWorkspace !== "object") {
       paper.researchWorkspace = {
-        version: 4, zoom: DEFAULT_RESEARCH_WORKSPACE_ZOOM, nodes: [], links: [], highlights: [], inkStrokes: [],
+        version: 4, zoom: DEFAULT_RESEARCH_WORKSPACE_ZOOM, nodes: [], links: [], highlights: [], inkStrokes: [], pdfShapes: [],
         pdfFrame: { x: 32, y: 32, width: 720, height: 1080 }
       };
     }
@@ -14075,10 +14486,12 @@ class PaperLibraryPlugin extends Plugin {
     workspace.links = Array.isArray(workspace.links) ? workspace.links : [];
     workspace.highlights = Array.isArray(workspace.highlights) ? workspace.highlights : [];
     workspace.inkStrokes = Array.isArray(workspace.inkStrokes) ? workspace.inkStrokes : [];
+    workspace.pdfShapes = Array.isArray(workspace.pdfShapes) ? workspace.pdfShapes : [];
     workspace.nodes.forEach((node) => { if (!node.id) node.id = workspaceId(node.type || "node"); });
     workspace.links.forEach((link) => { if (!link.id) link.id = workspaceId("link"); });
     workspace.highlights.forEach((highlight) => { if (!highlight.id) highlight.id = workspaceId("highlight"); });
     workspace.inkStrokes.forEach((stroke) => { if (!stroke.id) stroke.id = workspaceId("ink"); });
+    workspace.pdfShapes.forEach((shape) => { if (!shape.id) shape.id = workspaceId("shape"); });
     if ((Number(workspace.version) || 1) < 2) {
       workspace.nodes.forEach((node) => { node.x = Number(node.x || 0) + 780; });
     }

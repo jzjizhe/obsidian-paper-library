@@ -42,6 +42,8 @@ const PAPERLIB_ICON_ALIASES = {
   palette: ["paintbrush", "edit-3", "settings"],
   "panel-left-open": ["panel-left", "sidebar", "menu"],
   "panels-top-left": ["layout", "grid"],
+  shapes: ["square", "box-select", "circle"],
+  ellipse: ["circle"],
   "search-x": ["search", "x"],
   scan: ["focus", "maximize-2"],
   sparkles: ["star", "wand-2"],

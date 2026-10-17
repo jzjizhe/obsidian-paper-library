@@ -8923,6 +8923,17 @@ button.paperlib-file-open {
   pointer-events: none;
 }
 
+.paperlib-native-pdf-shape-layer,
+.paperlib-native-pdf-shape-preview {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
 /* 原生 PDF 视图的高亮覆盖层：库数据驱动，保存即显示，不等文件写回 */
 .paperlib-native-pdf-highlight-layer {
   position: absolute;
@@ -9245,7 +9256,7 @@ button.paperlib-file-open {
 }
 
 .paperlib-research-root:is(.is-highlight-mode, .is-ink-mode, .is-ai-region-mode) .paperlib-pdf-figure-drag-zone,
-.paperlib-native-pdf-host:is(.paperlib-native-highlight-mode, .paperlib-native-ink-mode, .paperlib-native-note-mode, .paperlib-native-ai-region-mode) .paperlib-pdf-figure-drag-zone {
+.paperlib-native-pdf-host:is(.paperlib-native-highlight-mode, .paperlib-native-ink-mode, .paperlib-native-note-mode, .paperlib-native-ai-region-mode, .paperlib-native-shape-mode, .paperlib-native-textbox-mode) .paperlib-pdf-figure-drag-zone {
   pointer-events: none;
 }
 
@@ -14661,6 +14672,51 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   display: none;
 }
 
+.paperlib-native-pdf-shapes {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.paperlib-native-pdf-shape-tool {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.paperlib-native-pdf-shape-tool:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.paperlib-native-pdf-shape-tool.is-active {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.paperlib-native-pdf-shape-tool svg {
+  width: 14px;
+  height: 14px;
+}
+
+.paperlib-native-shape-mode .paperlib-native-pdf-palette .paperlib-native-pdf-shapes,
+.paperlib-native-shape-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
+  display: flex;
+}
+
+.paperlib-native-ink-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
+  display: flex;
+}
+
 .paperlib-native-pdf-textbox-panel {
   display: none;
   flex-direction: column;
@@ -14744,12 +14800,6 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   border-color: var(--text-normal);
 }
 
-.paperlib-native-textbox-mode .textLayer,
-.paperlib-native-textbox-mode .textLayer span {
-  cursor: crosshair !important;
-}
-
-
 /* ===== 自由文本框（原生阅读器） ===== */
 .paperlib-native-pdf-host .page {
   overflow: visible !important;
@@ -14802,6 +14852,13 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 }
 
 .paperlib-native-textbox-mode .textLayer,
-.paperlib-native-textbox-mode .textLayer span {
+.paperlib-native-textbox-mode .textLayer span,
+.paperlib-native-shape-mode .page,
+.paperlib-native-shape-mode .textLayer,
+.paperlib-native-shape-mode .textLayer span {
   cursor: crosshair !important;
+}
+
+.paperlib-native-shape-mode .page {
+  touch-action: none;
 }
