@@ -8136,6 +8136,16 @@ class PaperLibraryPlugin extends Plugin {
       layer.dataset.signature = signature;
       pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl));
     });
+    // pdf.js 的注释层可能在页面渲染后才创建，写回后的 FreeText 会和覆盖卡片叠成两份；
+    // 这里晚一点再隐藏一次，覆盖异步创建的注释节点。
+    void this.getNativePdfOwnAnnotations(file).then((own) => {
+      const apply = () => {
+        if (container.isConnected) this.hideOwnNativePdfAnnotations(container, own);
+      };
+      apply();
+      setTimeout(apply, 200);
+      setTimeout(apply, 800);
+    }).catch(() => {});
   }
 
   refreshNativePdfTextBoxes(paper) {
@@ -8271,6 +8281,35 @@ class PaperLibraryPlugin extends Plugin {
     // 已有标注按自身保存的字号渲染；缺失时回退旧默认值，避免修改全局设置导致旧框外观变化
     const value = mark ? Number(mark.fontSize) || 11 : Number(this.settings.pdfTextBoxFontSize) || 18;
     return Math.max(8, Math.min(48, value));
+  }
+
+  measurePdfTextBoxText(mark, pageSize) {
+    // FreeText 没有外观流时由阅读器按 DA/Contents 自行排版，矩形必须容纳真实文字：
+    // 兼容显式换行和中文全角字符，避免写回后文字溢出到框外。
+    const fontSize = this.getPdfTextBoxFontSize(mark);
+    const text = String(mark?.comment || mark?.text || "");
+    const rawLines = text.split(/\r?\n/);
+    const measure = (line) => Array.from(line).reduce((width, char) => {
+      const fullWidth = /[\u1100-\u11FF\u2E80-\u9FFF\uA960-\uA97F\uAC00-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/.test(char);
+      return width + fontSize * (fullWidth ? 1 : /\s/.test(char) ? 0.35 : 0.55);
+    }, 0);
+    const maxLineWidth = Math.max(0, ...rawLines.map(measure));
+    const box = mark?.box || {};
+    const pageWidth = Math.max(1, Number(pageSize?.width) || 612);
+    const originX = Math.max(0, Math.min(1, Number(box.x) || 0.6)) * pageWidth;
+    const availableWidth = Math.max(48, pageWidth - originX);
+    const storedWidth = Math.max(48, (Number(box.width) || 0.32) * pageWidth);
+    const width = Math.min(availableWidth, Math.max(storedWidth, maxLineWidth + 8));
+    const usableWidth = Math.max(fontSize, width - 8);
+    const lines = rawLines.reduce((count, line) => {
+      return count + Math.max(1, Math.ceil(measure(line) / usableWidth));
+    }, 0);
+    return {
+      fontSize,
+      x: originX,
+      width,
+      height: Math.max(fontSize + 8, lines * (fontSize * 1.5) + 8)
+    };
   }
 
   getPdfTextBoxTextColorValue(mark) {
@@ -13514,6 +13553,17 @@ class PaperLibraryPlugin extends Plugin {
     return this.mutateLocalPdf(mark.pdfPath, async (document) => this.writeLocalPdfAnnotation(document, mark));
   }
 
+  readPdfAnnotationString(document, dictionary, name) {
+    const raw = dictionary?.get?.(PDFName.of(name));
+    if (!raw) return "";
+    const direct = document.context.lookupMaybe(raw, PDFString, PDFHexString);
+    if (direct) return direct.decodeText?.() || direct.asString?.() || "";
+    // 兼容旧版本 context.obj 把 PDFString 包成 << /value ... >> 的坏数据
+    const wrapper = document.context.lookupMaybe(raw, PDFDict);
+    const nested = document.context.lookupMaybe(wrapper?.get?.(PDFName.of("value")), PDFString, PDFHexString);
+    return nested?.decodeText?.() || nested?.asString?.() || "";
+  }
+
   writeLocalPdfAnnotation(document, mark) {
     {
       const page = document.getPage(Math.max(0, Number(mark.page || 1) - 1));
@@ -13528,8 +13578,7 @@ class PaperLibraryPlugin extends Plugin {
       for (let index = annots.size() - 1; index >= 0; index -= 1) {
         const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
         if (!dictionary) continue;
-        const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
-        const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+        const value = this.readPdfAnnotationString(document, dictionary, "NM");
         if (value === annotationId) annots.remove(index);
       }
       const subtype = mark.pdfSubtype === "Text" ? "Text"
@@ -13541,14 +13590,11 @@ class PaperLibraryPlugin extends Plugin {
         // 自由文本框：位置来自页面相对坐标，换算成 PDF 点
         const size = page.getSize?.() || { width: 612, height: 792 };
         const box = mark.box || { x: 0.6, y: 0.3, width: 0.32 };
-        const width = Math.max(48, (Number(box.width) || 0.32) * size.width);
-        const x = Math.max(0, Math.min(size.width - width, (Number(box.x) || 0.6) * size.width));
+        const layout = this.measurePdfTextBoxText(mark, size);
+        const width = layout.width;
+        const x = Math.max(0, Math.min(size.width - width, layout.x));
         const yTop = (1 - Math.max(0, Math.min(1, Number(box.y) || 0.3))) * size.height;
-        const contentText = String(mark.comment || mark.text || "");
-        const fontSize = this.getPdfTextBoxFontSize(mark);
-        const lines = Math.max(1, Math.ceil(contentText.length / Math.max(8, Math.floor(width / (fontSize * 0.5)))));
-        const height = Math.max(fontSize + 8, lines * (fontSize + 2) + 8);
-        rect = [x, Math.max(0, yTop - height), Math.min(size.width, x + width), yTop];
+        rect = [x, Math.max(0, yTop - layout.height), Math.min(size.width, x + width), yTop];
       } else {
         const allRects = (mark.pdfRects || []).map((item) => item.rect).filter((item) => item?.length === 4);
         rect = [
@@ -13565,14 +13611,9 @@ class PaperLibraryPlugin extends Plugin {
         C: color,
         CA: subtype === "FreeText" ? 1 : 0.38,
         F: 4,
-        T: PDFHexString.fromText("Paper Library"),
-        Contents: PDFHexString.fromText(mark.comment || mark.text || "Paper Library annotation"),
-        NM: PDFHexString.fromText(annotationId),
-        M: PDFString.of(this.pdfDate()),
         P: page.ref
       };
       if (subtype === "FreeText") {
-        values.DA = PDFString.of(`/Helvetica ${this.getPdfTextBoxFontSize(mark)} Tf ${this.pdfTextColorOperator(mark)}`);
         values.Border = [0, 0, 1];
       }
       if (subtype === "Highlight") {
@@ -13615,6 +13656,16 @@ class PaperLibraryPlugin extends Plugin {
       }
       else values.Name = "Comment";
       const annotation = document.context.obj(values);
+      // context.obj 会把 PDFString/PDFHexString 再包一层 { value }，必须用 set 直接写入字符串对象
+      annotation.set(PDFName.of("T"), PDFHexString.fromText("Paper Library"));
+      annotation.set(PDFName.of("Contents"), PDFHexString.fromText(mark.comment || mark.text || "Paper Library annotation"));
+      annotation.set(PDFName.of("NM"), PDFHexString.fromText(annotationId));
+      annotation.set(PDFName.of("M"), PDFString.of(this.pdfDate()));
+      if (subtype === "FreeText") {
+        annotation.set(PDFName.of("DA"), PDFString.of(
+          `/Helvetica ${this.getPdfTextBoxFontSize(mark)} Tf ${this.pdfTextColorOperator(mark)}`
+        ));
+      }
       annots.push(document.context.register(annotation));
       return true;
     }
@@ -13745,8 +13796,7 @@ class PaperLibraryPlugin extends Plugin {
         for (let index = annots.size() - 1; index >= 0; index -= 1) {
           const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
           if (!dictionary) continue;
-          const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
-          const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+          const value = this.readPdfAnnotationString(document, dictionary, "NM");
           if (!value.startsWith("paperlib:") || valid.has(value)) continue;
           annots.remove(index);
           changed = true;
