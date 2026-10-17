@@ -14681,15 +14681,16 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-size-row {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 1px 4px;
+  gap: 0;
+  padding: 1px 3px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 5px;
   background: var(--background-primary);
   color: var(--text-muted);
   font-size: 10px;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -14698,9 +14699,10 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 }
 
 .paperlib-native-pdf-size-row .paperlib-native-pdf-size-input {
-  width: 24px;
+  width: 22px;
   min-width: 0;
   height: auto;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -14708,7 +14710,14 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   box-shadow: none;
   color: var(--text-normal);
   font-size: 11px;
+  line-height: 1.2;
   text-align: center;
+}
+
+.paperlib-native-pdf-size-input::-webkit-outer-spin-button,
+.paperlib-native-pdf-size-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .paperlib-native-pdf-text-colors {
