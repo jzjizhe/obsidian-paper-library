@@ -343,6 +343,7 @@ class PaperLibraryPlugin extends Plugin {
     this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
     this.nativeOverlayHidden = false;
     this.nativeEmbeddedHidden = false;
+    this.nativeAnnotationLayersHidden = false;
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
@@ -469,6 +470,26 @@ class PaperLibraryPlugin extends Plugin {
       }
     });
     this.addCommand({
+      id: "debug-hide-annotation-layers",
+      name: "调试：显示/隐藏所有注释层容器",
+      callback: () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const container = leaf?.view?.containerEl;
+        if (!container) {
+          new Notice("请先打开一个 PDF");
+          return;
+        }
+        this.nativeAnnotationLayersHidden = !this.nativeAnnotationLayersHidden;
+        const layers = [...container.querySelectorAll(".annotationLayer, .annotationEditorLayer")];
+        layers.forEach((layer) => { layer.style.display = this.nativeAnnotationLayersHidden ? "none" : ""; });
+        new Notice(this.nativeAnnotationLayersHidden
+          ? `已隐藏 ${layers.length} 个注释层容器（高亮若仍可见则说明画在页面画布上）`
+          : "已恢复注释层容器");
+      }
+    });
+    this.addCommand({
       id: "debug-toggle-embedded-highlights",
       name: "调试：显示/隐藏所有内嵌高亮注释",
       callback: () => {
@@ -548,6 +569,34 @@ class PaperLibraryPlugin extends Plugin {
           diagnostics.ownIdsError = String(error?.message || error);
         }
         diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        try {
+          const buffer = await this.readPdfBinary(file);
+          const pdfjs = await loadPdfJs();
+          const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+          try {
+            diagnostics.highlightAnnotations = [];
+            for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
+              const page = await document.getPage(pageNumber);
+              const annotations = await page.getAnnotations();
+              (annotations || []).forEach((annotation) => {
+                if (String(annotation.subtype || "").toLowerCase() !== "highlight") return;
+                diagnostics.highlightAnnotations.push({
+                  page: pageNumber,
+                  id: annotation.id,
+                  titleStr: annotation.titleObj?.str || "",
+                  hasAppearance: Boolean(annotation.hasAppearance),
+                  hasOwnCanvas: Boolean(annotation.hasOwnCanvas),
+                  rect: (annotation.rect || []).map((value) => Math.round(value)),
+                  keys: Object.keys(annotation)
+                });
+              });
+            }
+          } finally {
+            await document.destroy?.();
+          }
+        } catch (error) {
+          diagnostics.highlightAnnotationsError = String(error?.message || error);
+        }
         {
           const allOwn = new Set();
           for (const ids of ownIds.values()) for (const id of ids) allOwn.add(String(id));
