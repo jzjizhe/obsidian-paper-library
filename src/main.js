@@ -12358,9 +12358,18 @@ class PaperLibraryPlugin extends Plugin {
         P: page.ref
       };
       if (subtype === "Highlight") {
-        // 不生成外观流（AP）：pdf.js 会把带 AP 的高亮渲染进页面画布（hasOwnCanvas），
-        // 与插件覆盖层叠加导致变深且无法用 DOM 隐藏。QuadPoints + C + CA 足以让各阅读器渲染高亮。
-        values.QuadPoints = mark.pdfRects.flatMap((item) => item.quad || []);
+        // 写入前合并重叠/相邻矩形：Obsidian 渲染注释时逐个四边形填充，
+        // 原始选区矩形大量重叠（同一行拆成多段、上下差 1px），重叠处会被填充两次导致颜色不均。
+        // 一行只写一个四边形（QuadPoints 顺序：左上、右上、左下、右下）。
+        const mergedRects = this.mergePdfHighlightViewportRects(
+          mark.pdfRects.map((item) => item.rect).filter((rect) => Array.isArray(rect) && rect.length === 4)
+        );
+        values.QuadPoints = mergedRects.flatMap((rect) => [
+          Math.min(rect[0], rect[2]), Math.max(rect[1], rect[3]),
+          Math.max(rect[0], rect[2]), Math.max(rect[1], rect[3]),
+          Math.min(rect[0], rect[2]), Math.min(rect[1], rect[3]),
+          Math.max(rect[0], rect[2]), Math.min(rect[1], rect[3])
+        ]);
       }
       else values.Name = "Comment";
       const annotation = document.context.obj(values);
