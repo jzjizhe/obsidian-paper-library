@@ -343,8 +343,6 @@ class PaperLibraryPlugin extends Plugin {
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
-    this.nativeHighlightTooltip = null;
-    this.nativeHighlightHoverTimer = null;
     this.nativePdfPositionSuppressUntil = 0;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
@@ -568,17 +566,14 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
     this.nativePdfToolbarObserver?.disconnect();
-    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, hoverMove, hoverLeave }) => {
+    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);
       container.removeEventListener("contextmenu", contextMenu, true);
       container.removeEventListener("dragstart", dragStart, true);
       container.removeEventListener("click", click, true);
       container.removeEventListener("scroll", scroll, true);
-      container.removeEventListener("pointermove", hoverMove, true);
-      container.removeEventListener("pointerleave", hoverLeave);
     });
-    this.hideNativePdfHighlightTooltip();
     this.persistPaperReadingPositions();
     this.nativePdfBindingList = [];
     document.querySelectorAll(".paperlib-native-pdf-tools").forEach((element) => element.remove());
@@ -6766,19 +6761,14 @@ class PaperLibraryPlugin extends Plugin {
             }
           });
           if (current) this.recordPdfReadingPosition(paper, current);
-          this.hideNativePdfHighlightTooltip();
         };
-        const hoverMove = (event) => this.handleNativePdfHighlightHover(event, leaf, container);
-        const hoverLeave = () => this.hideNativePdfHighlightTooltip();
         container.addEventListener("pointerdown", pointerDown, true);
         container.addEventListener("pointerup", pointerUp, true);
         container.addEventListener("contextmenu", contextMenu, true);
         container.addEventListener("dragstart", dragStart, true);
         container.addEventListener("click", click, true);
         container.addEventListener("scroll", scroll, true);
-        container.addEventListener("pointermove", hoverMove, true);
-        container.addEventListener("pointerleave", hoverLeave);
-        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, hoverMove, hoverLeave };
+        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll };
         this.nativePdfBindings.set(container, binding);
         this.nativePdfBindingList.push(binding);
       }
@@ -7153,60 +7143,6 @@ class PaperLibraryPlugin extends Plugin {
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
     });
-  }
-
-  handleNativePdfHighlightHover(event, leaf, container) {
-    if (this.nativeHighlightHoverTimer) return;
-    this.nativeHighlightHoverTimer = setTimeout(() => { this.nativeHighlightHoverTimer = null; }, 80);
-    const pageEl = event.target?.closest?.(".page[data-page-number], .page");
-    if (!pageEl || !container.contains(pageEl)) return this.hideNativePdfHighlightTooltip();
-    let hit = null;
-    pageEl.querySelectorAll(".paperlib-native-pdf-highlight-path").forEach((pathEl) => {
-      if (hit) return;
-      let inside = false;
-      try {
-        const matrix = pathEl.getScreenCTM?.();
-        if (matrix && typeof pathEl.isPointInFill === "function") {
-          const point = pathEl.ownerSVGElement.createSVGPoint();
-          point.x = event.clientX;
-          point.y = event.clientY;
-          inside = pathEl.isPointInFill(point.matrixTransform(matrix.inverse()));
-        }
-      } catch (error) {
-        inside = false;
-      }
-      if (!inside) {
-        const rect = pathEl.getBoundingClientRect?.();
-        inside = Boolean(rect && event.clientX >= rect.left && event.clientX <= rect.right
-          && event.clientY >= rect.top && event.clientY <= rect.bottom);
-      }
-      if (inside) hit = pathEl;
-    });
-    if (!hit) return this.hideNativePdfHighlightTooltip();
-    const file = leaf.view?.file || this.app.workspace.getActiveFile();
-    const paper = this.getPaperForPdfFile(file);
-    const mark = paper && (this.ensureResearchWorkspace(paper).highlights || [])
-      .find((item) => item.id === hit.dataset?.markId);
-    if (!mark?.text) return this.hideNativePdfHighlightTooltip();
-    let tooltip = this.nativeHighlightTooltip;
-    if (!tooltip?.isConnected) {
-      tooltip = document.createElement("div");
-      tooltip.className = "paperlib-native-pdf-highlight-tooltip";
-      document.body.appendChild(tooltip);
-      this.nativeHighlightTooltip = tooltip;
-    }
-    tooltip.setText(mark.text);
-    const rect = tooltip.getBoundingClientRect();
-    const x = Math.min(window.innerWidth - rect.width - 8, Math.max(8, event.clientX + 12));
-    const y = event.clientY - rect.height - 12 >= 8 ? event.clientY - rect.height - 12 : event.clientY + 16;
-    tooltip.style.left = `${x}px`;
-    tooltip.style.top = `${y}px`;
-  }
-
-  hideNativePdfHighlightTooltip() {
-    if (!this.nativeHighlightTooltip) return;
-    this.nativeHighlightTooltip.remove();
-    this.nativeHighlightTooltip = null;
   }
 
   recordPdfReadingPosition(paper, page) {

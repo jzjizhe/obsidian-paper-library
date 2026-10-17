@@ -8936,22 +8936,6 @@ button.paperlib-file-open {
   fill-opacity: .42;
 }
 
-.paperlib-native-pdf-highlight-tooltip {
-  position: fixed;
-  z-index: 10000;
-  max-width: 320px;
-  padding: 6px 9px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  box-shadow: 0 4px 18px rgb(0 0 0 / 20%);
-  color: var(--text-normal);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  pointer-events: none;
-}
-
 .paperlib-pdf-selection-divider {
   width: 1px;
   align-self: stretch;
