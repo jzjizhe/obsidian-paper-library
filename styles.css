@@ -9028,9 +9028,9 @@ button.paperlib-file-open {
   color: var(--text-error);
 }
 
-/* 覆盖层负责显示，隐藏注释层里我们写入的内嵌高亮，避免双份叠加变深 */
-.paperlib-native-pdf-host .annotationLayer [data-annotation-id^="paperlib:"] {
-  display: none;
+/* 覆盖层负责显示，隐藏注释层里与库内高亮重合的内嵌高亮，避免双份叠加变深 */
+.paperlib-native-pdf-host .annotationLayer section.paperlib-native-hidden-annotation {
+  display: none !important;
 }
 
 .paperlib-pdf-ink-path {

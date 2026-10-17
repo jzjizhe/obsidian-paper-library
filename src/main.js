@@ -7099,10 +7099,12 @@ class PaperLibraryPlugin extends Plugin {
           && Number(mark.page) === pageNumber
           && Array.isArray(mark.pdfRects) && mark.pdfRects.length
       ));
-      // 版本前缀：渲染方式升级时强制重绘，避免旧 DOM 因签名相同被跳过
       const signature = `svg1|${marks.map((mark) => `${mark.id}:${mark.color}`).join("|")}`;
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
-      if (!force && existing?.dataset.signature === signature) return;
+      if (!force && existing?.dataset.signature === signature) {
+        this.hideDuplicateNativePdfAnnotations(pageEl, marks, dims);
+        return;
+      }
       const layer = existing || this.ensureNativePdfHighlightLayer(pageEl);
       layer.replaceChildren();
       layer.dataset.signature = signature;
@@ -7131,6 +7133,48 @@ class PaperLibraryPlugin extends Plugin {
         pathEl.setAttribute("fill", color.value);
         layer.appendChild(pathEl);
       });
+      this.hideDuplicateNativePdfAnnotations(pageEl, marks, dims);
+    });
+  }
+
+  hideDuplicateNativePdfAnnotations(pageEl, marks, dims) {
+    // 写回后 PDF 注释层会渲染我们写入的内嵌高亮，与覆盖层叠加导致颜色变深且不均匀。
+    // pdf.js 的 data-annotation-id 是对象引用而非写入的 NM，无法按 id 匹配；
+    // 这里按几何位置识别：注释层中与库内高亮矩形重合的 highlight 注释隐藏，
+    // 显示统一由覆盖层负责。只处理 highlight，避免误伤链接等注释。
+    const sections = pageEl.querySelectorAll?.(".annotationLayer section") || [];
+    if (!sections.length) return;
+    const pageRect = pageEl.getBoundingClientRect?.();
+    if (!pageRect?.width || !pageRect?.height) return;
+    const boxes = [];
+    (marks || []).forEach((mark) => {
+      (mark.pdfRects || []).forEach((item) => {
+        const rect = item?.rect;
+        if (!Array.isArray(rect) || rect.length !== 4) return;
+        boxes.push({
+          left: Math.min(rect[0], rect[2]) / dims.width * pageRect.width,
+          right: Math.max(rect[0], rect[2]) / dims.width * pageRect.width,
+          top: (1 - Math.max(rect[1], rect[3]) / dims.height) * pageRect.height,
+          bottom: (1 - Math.min(rect[1], rect[3]) / dims.height) * pageRect.height
+        });
+      });
+    });
+    sections.forEach((section) => {
+      section.classList?.remove?.("paperlib-native-hidden-annotation");
+      if (!boxes.length) return;
+      if (!/highlight/i.test(section.className || "")) return;
+      const rect = section.getBoundingClientRect?.();
+      if (!rect?.width || !rect?.height) return;
+      // 与库内高亮矩形的重叠面积达到自身一半以上，视为同一条内嵌高亮
+      let coveredArea = 0;
+      boxes.forEach((box) => {
+        const width = Math.min(rect.right, pageRect.left + box.right) - Math.max(rect.left, pageRect.left + box.left);
+        const height = Math.min(rect.bottom, pageRect.top + box.bottom) - Math.max(rect.top, pageRect.top + box.top);
+        if (width > 0 && height > 0) coveredArea += width * height;
+      });
+      if (coveredArea >= rect.width * rect.height * 0.5) {
+        section.classList?.add?.("paperlib-native-hidden-annotation");
+      }
     });
   }
 
