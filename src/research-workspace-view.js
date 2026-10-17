@@ -242,13 +242,20 @@ class PaperResearchWorkspaceView extends ItemView {
     }, `${this.toolMode === "ink" ? "is-active" : ""} paperlib-ink-tool`);
     const activeInkColor = CANVAS_HIGHLIGHT_COLORS.find((color) => color.id === this.inkColor) || CANVAS_HIGHLIGHT_COLORS[0];
     inkTool.style.setProperty("--tool-highlight-color", activeInkColor.value);
+    const activeUnderlineColor = CANVAS_HIGHLIGHT_COLORS.find((color) => color.id === this.highlightColor) || CANVAS_HIGHLIGHT_COLORS[0];
+    iconButton(modeGroup, "underline", "下划线", () => {
+      const wasActive = this.toolMode === "underline";
+      this.toolMode = "underline";
+      this.colorPaletteOpen = wasActive ? !this.colorPaletteOpen : true;
+      this.refreshCanvasToolbar(root, paper, workspace);
+    }, `${this.toolMode === "underline" ? "is-active" : ""} paperlib-underline-tool`).style.setProperty("--tool-highlight-color", activeUnderlineColor.value);
     iconButton(modeGroup, "scan", "圈选区域 Ask AI", () => {
       this.toolMode = "ai-region";
       this.colorPaletteOpen = false;
       this.refreshCanvasToolbar(root, paper, workspace);
     }, `${this.toolMode === "ai-region" ? "is-active" : ""} paperlib-ai-region-tool`);
     const paletteColorId = this.toolMode === "ink" ? this.inkColor : this.highlightColor;
-    const palette = modeGroup.createDiv({ cls: `paperlib-highlight-palette ${this.colorPaletteOpen && ["highlight", "ink"].includes(this.toolMode) ? "is-visible" : ""}` });
+    const palette = modeGroup.createDiv({ cls: `paperlib-highlight-palette ${this.colorPaletteOpen && ["highlight", "ink", "underline"].includes(this.toolMode) ? "is-visible" : ""}` });
     CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
       const swatch = palette.createEl("button", {
         cls: `paperlib-highlight-swatch ${paletteColorId === color.id ? "is-active" : ""}`,
@@ -938,6 +945,30 @@ class PaperResearchWorkspaceView extends ItemView {
         }
       });
     });
+    toolbar.createDiv({ cls: "paperlib-pdf-selection-divider" });
+    const underlineButton = toolbar.createEl("button", {
+      cls: "paperlib-pdf-selection-action",
+      attr: { type: "button", "aria-label": "下划线", title: "下划线" }
+    });
+    setPaperlibIcon(underlineButton, "underline");
+    underlineButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!current() || !toolbar.isConnected) return;
+      this.dismissWorkspacePdfSelectionToolbar();
+      this.highlightColor = this.highlightColor || "yellow";
+      this.paintPdfHighlight(textLayer, context, this.highlightColor, "Underline");
+      selection.removeAllRanges();
+      this.refreshCanvasToolbar(itemViewContentRoot(this), paper, this.plugin.ensureResearchWorkspace(paper));
+      try {
+        await this.plugin.saveCanvasHighlight(context, this.highlightColor, { pdfSubtype: "Underline" });
+      } catch (error) {
+        console.error("Paper Library: failed to underline PDF selection", error);
+        new Notice(`下划线失败：${error.message || error}`);
+      } finally {
+        if (current()) this.refreshPdfHighlights(paper);
+      }
+    });
     const popup = toolbar.getBoundingClientRect();
     const rect = context.dragSourceRect;
     const viewport = owner.visualViewport;
@@ -981,7 +1012,7 @@ class PaperResearchWorkspaceView extends ItemView {
     };
   }
 
-  beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber) {
+  beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber, pdfSubtype = "Highlight") {
     if (event.button !== 0) return;
     this.dismissWorkspacePdfSelectionToolbar();
     this.pdfHighlightGestureCleanup?.();
@@ -995,7 +1026,7 @@ class PaperResearchWorkspaceView extends ItemView {
     const up = (end) => {
       if (event.pointerId !== undefined && end.pointerId !== event.pointerId) return;
       cleanup();
-      if (textLayer.isConnected) this.handlePdfHighlight(end, textLayer, paper, pageNumber);
+      if (textLayer.isConnected) this.handlePdfHighlight(end, textLayer, paper, pageNumber, pdfSubtype);
     };
     this.pdfHighlightGestureCleanup = cleanup;
     window.addEventListener("pointerup", up, true);
@@ -1486,7 +1517,8 @@ class PaperResearchWorkspaceView extends ItemView {
       menu.showAtMouseEvent(event);
     }, true);
     textLayer.addEventListener("pointerdown", (event) => {
-      if (this.toolMode === "highlight") this.beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber);
+      if (this.toolMode === "highlight") this.beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber, "Highlight");
+      else if (this.toolMode === "underline") this.beginWorkspacePdfHighlight(event, textLayer, paper, pageNumber, "Underline");
       else {
         this.beginWorkspacePdfTextSelection(event, textLayer, paper, pageNumber);
         this.scheduleExcerptDrag(event, textLayer, paper, pageNumber);
@@ -1710,12 +1742,15 @@ class PaperResearchWorkspaceView extends ItemView {
     const color = CANVAS_HIGHLIGHT_COLORS.find((item) => (
       item.id === String(marking.color || "").toLocaleLowerCase()
     )) || CANVAS_HIGHLIGHT_COLORS[0];
+    const isUnderline = String(marking.pdfSubtype || "").toLocaleLowerCase() === "underline";
     merged.forEach((rect) => {
-      const highlight = highlightLayer.createDiv({ cls: "paperlib-pdf-highlight-rect" });
+      const highlight = highlightLayer.createDiv({
+        cls: isUnderline ? "paperlib-pdf-highlight-rect is-underline" : "paperlib-pdf-highlight-rect"
+      });
       highlight.style.left = `${rect[0]}px`;
-      highlight.style.top = `${rect[1]}px`;
+      highlight.style.top = `${isUnderline ? Math.max(rect[1], rect[3] - 2) : rect[1]}px`;
       highlight.style.width = `${Math.max(0.5, rect[2] - rect[0])}px`;
-      highlight.style.height = `${Math.max(0.5, rect[3] - rect[1])}px`;
+      highlight.style.height = `${isUnderline ? 2 : Math.max(0.5, rect[3] - rect[1])}px`;
       highlight.style.setProperty("--paperlib-pdf-highlight", `${color.value}70`);
       if (marking.id) highlight.dataset.markId = marking.id;
     });
@@ -1844,8 +1879,8 @@ class PaperResearchWorkspaceView extends ItemView {
       const color = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === String(entry.record.color || "").toLocaleLowerCase());
       menu.addItem((item) => item
         .setTitle(marks.length > 1
-          ? `删除${color?.label || "此处"}${entry.record.pdfSubtype === "Text" ? "注释" : "高光"}`
-          : `删除${entry.record.pdfSubtype === "Text" ? "注释" : "高光"}`)
+          ? `删除${color?.label || "此处"}${entry.record.pdfSubtype === "Text" ? "注释" : entry.record.pdfSubtype === "Underline" ? "下划线" : "高光"}`
+          : `删除${entry.record.pdfSubtype === "Text" ? "注释" : entry.record.pdfSubtype === "Underline" ? "下划线" : "高光"}`)
         .setIcon("eraser")
         .onClick(() => this.plugin.deletePdfMark(paper, entry)));
     });
@@ -1891,26 +1926,27 @@ class PaperResearchWorkspaceView extends ItemView {
     }, 420);
   }
 
-  handlePdfHighlight(event, textLayer, paper, pageNumber) {
-    if (this.toolMode !== "highlight" || event.button !== 0) return;
+  handlePdfHighlight(event, textLayer, paper, pageNumber, pdfSubtype = "Highlight") {
+    if (!["highlight", "underline"].includes(this.toolMode) || event.button !== 0) return;
     const owner = textLayer.ownerDocument.defaultView;
     owner.setTimeout(() => {
       if (!textLayer.isConnected) return;
       this.repairWorkspacePdfSelectionEnd(textLayer, event);
       const context = this.getCanvasSelection(textLayer, event.target, paper, pageNumber, false);
       if (!context) return;
-      this.paintPdfHighlight(textLayer, context, this.highlightColor);
-      void this.plugin.saveCanvasHighlight(context, this.highlightColor);
+      this.paintPdfHighlight(textLayer, context, this.highlightColor, pdfSubtype);
+      void this.plugin.saveCanvasHighlight(context, this.highlightColor, { pdfSubtype });
       owner.getSelection?.()?.removeAllRanges?.();
     }, 0);
   }
 
-  paintPdfHighlight(textLayer, context, colorId) {
+  paintPdfHighlight(textLayer, context, colorId, pdfSubtype = "Highlight") {
     const color = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === colorId) || CANVAS_HIGHLIGHT_COLORS[0];
     const highlightLayer = textLayer.closest(".paperlib-selectable-pdf-page")?.querySelector(".paperlib-pdf-highlight-layer");
     if (this.renderPdfHighlightRects(highlightLayer, textLayer.__paperlibViewport, {
       id: `pending-${Date.now()}`,
       color: color.id,
+      pdfSubtype,
       pdfRects: context.pdfRects
     })) return;
     const range = context.range;

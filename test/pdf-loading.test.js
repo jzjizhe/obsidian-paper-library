@@ -361,7 +361,7 @@ async function testWorkspaceSelectionPopup() {
     assert.ok(toolbar);
     assert.equal(toolbar.parentNode, f.document.body, "popup must escape the scaled workspace");
     assert.equal(toolbar.getAttribute("role"), "toolbar");
-    const buttons = toolbar.querySelectorAll("button");
+    const buttons = [...toolbar.querySelectorAll("button")].filter((button) => button.dataset.color);
     assert.deepEqual(buttons.map((button) => button.dataset.color), ["yellow", "orange", "green", "blue", "pink"]);
     const button = buttons.find((item) => item.dataset.color === color);
     assert.equal(button.style["--swatch-color"], swatch);

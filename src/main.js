@@ -6894,6 +6894,12 @@ class PaperLibraryPlugin extends Plugin {
       highlightColorBar.setAttribute("aria-hidden", "true");
       highlight.appendChild(highlightColorBar);
       group.appendChild(highlight);
+      const underline = document.createElement("button");
+      underline.className = "clickable-icon paperlib-native-pdf-tool is-underline";
+      underline.title = "Paper Library 下划线";
+      underline.setAttribute("aria-label", "下划线");
+      setPaperlibIcon(underline, "underline");
+      group.appendChild(underline);
       const palette = document.createElement("div");
       palette.className = "paperlib-native-pdf-palette";
       CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
@@ -7034,6 +7040,14 @@ class PaperLibraryPlugin extends Plugin {
         state.paletteOpen = wasActive ? !state.paletteOpen : true;
         this.updateNativePdfToolbarState(container, group, state);
       });
+      underline.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const wasActive = state.mode === "underline";
+        state.mode = "underline";
+        state.paletteOpen = wasActive ? !state.paletteOpen : true;
+        this.updateNativePdfToolbarState(container, group, state);
+      });
       ink.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -7112,7 +7126,7 @@ class PaperLibraryPlugin extends Plugin {
         const pointerUp = (event) => {
           const active = this.nativePdfStates.get(container);
           // 空模式（纯选择）也要放行：选中文字后弹出颜色标注条
-          if (!["highlight", "note", "eraser", ""].includes(active?.mode ?? "") || active.busy) return;
+          if (!["highlight", "note", "underline", "eraser", ""].includes(active?.mode ?? "") || active.busy) return;
           void this.handleNativePdfPointerUp(event, leaf, container, active);
         };
         const contextMenu = (event) => {
@@ -7507,23 +7521,45 @@ class PaperLibraryPlugin extends Plugin {
         )) || CANVAS_HIGHLIGHT_COLORS[0];
         // 每个标注画成一条 SVG 路径：同一路径内的重叠子区域只填充一次，
         // 无论选区矩形如何重叠都不会叠色（multiply 只作用于不同标注之间）
+        const isUnderline = String(mark.pdfSubtype || "").toLocaleLowerCase() === "underline";
         const segments = [];
-        mark.pdfRects.forEach((item) => {
-          const rect = item?.rect;
-          if (!Array.isArray(rect) || rect.length !== 4) return;
-          const x1 = Math.min(rect[0], rect[2]) / dims.width * 1000;
-          const x2 = Math.max(rect[0], rect[2]) / dims.width * 1000;
-          const yTop = (1 - Math.max(rect[1], rect[3]) / dims.height) * 1000;
-          const yBottom = (1 - Math.min(rect[1], rect[3]) / dims.height) * 1000;
-          if (x2 - x1 < 0.05 || yBottom - yTop < 0.05) return;
-          segments.push(`M${x1.toFixed(2)} ${yTop.toFixed(2)}H${x2.toFixed(2)}V${yBottom.toFixed(2)}H${x1.toFixed(2)}Z`);
-        });
+        if (isUnderline) {
+          // 下划线：合并矩形后只画底部一条线
+          const merged = this.mergePdfHighlightViewportRects(
+            mark.pdfRects.map((item) => item?.rect).filter((rect) => Array.isArray(rect) && rect.length === 4)
+          );
+          merged.forEach((rect) => {
+            const x1 = Math.min(rect[0], rect[2]) / dims.width * 1000;
+            const x2 = Math.max(rect[0], rect[2]) / dims.width * 1000;
+            const yBottom = (1 - Math.min(rect[1], rect[3]) / dims.height) * 1000;
+            if (x2 - x1 < 0.05) return;
+            segments.push(`M${x1.toFixed(2)} ${yBottom.toFixed(2)}H${x2.toFixed(2)}`);
+          });
+        } else {
+          mark.pdfRects.forEach((item) => {
+            const rect = item?.rect;
+            if (!Array.isArray(rect) || rect.length !== 4) return;
+            const x1 = Math.min(rect[0], rect[2]) / dims.width * 1000;
+            const x2 = Math.max(rect[0], rect[2]) / dims.width * 1000;
+            const yTop = (1 - Math.max(rect[1], rect[3]) / dims.height) * 1000;
+            const yBottom = (1 - Math.min(rect[1], rect[3]) / dims.height) * 1000;
+            if (x2 - x1 < 0.05 || yBottom - yTop < 0.05) return;
+            segments.push(`M${x1.toFixed(2)} ${yTop.toFixed(2)}H${x2.toFixed(2)}V${yBottom.toFixed(2)}H${x1.toFixed(2)}Z`);
+          });
+        }
         if (!segments.length) return;
         const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        pathEl.setAttribute("class", "paperlib-native-pdf-highlight-path");
+        pathEl.setAttribute("class", isUnderline ? "paperlib-native-pdf-highlight-path is-underline" : "paperlib-native-pdf-highlight-path");
         pathEl.dataset.markId = mark.id || "";
         pathEl.setAttribute("d", segments.join(""));
-        pathEl.setAttribute("fill", color.value);
+        if (isUnderline) {
+          pathEl.setAttribute("fill", "none");
+          pathEl.setAttribute("stroke", color.value);
+          pathEl.setAttribute("stroke-width", "1.6");
+          pathEl.setAttribute("vector-effect", "non-scaling-stroke");
+        } else {
+          pathEl.setAttribute("fill", color.value);
+        }
         layer.appendChild(pathEl);
       });
     });
@@ -7944,6 +7980,7 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-ink")?.style.setProperty("--tool-highlight-color", inkColor.value);
     group.querySelector(".is-select")?.classList.toggle("is-active", !state.mode);
     group.querySelector(".is-highlighter")?.classList.toggle("is-active", state.mode === "highlight");
+    group.querySelector(".is-underline")?.classList.toggle("is-active", state.mode === "underline");
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
@@ -7952,12 +7989,13 @@ class PaperLibraryPlugin extends Plugin {
       button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 3));
     });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
-      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink"].includes(state.mode))
+      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline"].includes(state.mode))
     );
     group.querySelectorAll(".paperlib-native-pdf-swatch").forEach((swatch) => {
       swatch.classList.toggle("is-active", swatch.dataset.color === paletteColor.id);
     });
     container.classList.toggle("paperlib-native-highlight-mode", state.mode === "highlight");
+    container.classList.toggle("paperlib-native-underline-mode", state.mode === "underline");
     container.classList.toggle("paperlib-native-ink-mode", state.mode === "ink");
     container.classList.toggle("paperlib-native-note-mode", state.mode === "note");
     container.classList.toggle("paperlib-native-ai-region-mode", state.mode === "ai-region");
@@ -8127,6 +8165,8 @@ class PaperLibraryPlugin extends Plugin {
       if (!context) return;
       if (state.mode === "highlight") {
         await this.saveCanvasHighlight(context, state.highlightColor || state.color || "yellow");
+      } else if (state.mode === "underline") {
+        await this.saveCanvasHighlight(context, state.highlightColor || state.color || "yellow", { pdfSubtype: "Underline" });
       } else if (state.mode === "note") {
         new NativePdfAnnotationModal(this.app, this, context, state.highlightColor || state.color || "yellow").open();
       }
@@ -8366,7 +8406,7 @@ class PaperLibraryPlugin extends Plugin {
   showNativePdfMarkDeleteMenu(event, paper, marks) {
     const menu = new Menu();
     marks.forEach((entry) => {
-      const kind = entry.record.pdfSubtype === "Text" ? "注释" : "高光";
+      const kind = entry.record.pdfSubtype === "Text" ? "注释" : entry.record.pdfSubtype === "Underline" ? "下划线" : "高光";
       const color = CANVAS_HIGHLIGHT_COLORS.find((item) => (
         item.id === String(entry.record.color || "").toLocaleLowerCase()
       ));
@@ -12557,7 +12597,7 @@ class PaperLibraryPlugin extends Plugin {
         Math.max(...allRects.map((item) => item[3]))
       ];
       const color = this.pdfColor(mark.color);
-      const subtype = mark.pdfSubtype === "Text" ? "Text" : "Highlight";
+      const subtype = mark.pdfSubtype === "Text" ? "Text" : mark.pdfSubtype === "Underline" ? "Underline" : "Highlight";
       const values = {
         Type: "Annot",
         Subtype: subtype,
@@ -12787,7 +12827,7 @@ class PaperLibraryPlugin extends Plugin {
       rectCoordinateSpace: context.rectCoordinateSpace || "unknown",
       color: normalizedColor,
       comment,
-      pdfSubtype: options.pdfSubtype === "Text" ? "Text" : "Highlight",
+      pdfSubtype: ["Text", "Underline"].includes(options.pdfSubtype) ? options.pdfSubtype : "Highlight",
       pdfRects: Array.isArray(context.pdfRects) ? context.pdfRects.map((item) => ({ ...item })) : [],
       link: target,
       pdfPath,
@@ -12827,10 +12867,11 @@ class PaperLibraryPlugin extends Plugin {
     return true;
   }
 
-  async saveCanvasHighlight(context, colorId = "yellow") {
+  async saveCanvasHighlight(context, colorId = "yellow", options = {}) {
     const paper = this.getCanonicalPaper(context.paper);
     const { text, page, range } = context;
     if (!paper) return false;
+    const pdfSubtype = ["Underline", "Text"].includes(options?.pdfSubtype) ? options.pdfSubtype : "Highlight";
     const workspace = this.ensureResearchWorkspace(paper);
     const pdfPath = context.pdfPath || paper.pdfPath;
     const normalizedColor = CANVAS_HIGHLIGHT_COLORS.some((color) => color.id === colorId) ? colorId : "yellow";
@@ -12851,6 +12892,7 @@ class PaperLibraryPlugin extends Plugin {
     if (existing) {
       if (existing.color === normalizedColor) return false;
       existing.color = normalizedColor;
+      existing.pdfSubtype = pdfSubtype;
       existing.link = target;
       if (Array.isArray(context.pdfRects) && context.pdfRects.length) {
         existing.pdfRects = context.pdfRects.map((item) => ({ ...item }));
@@ -12874,7 +12916,7 @@ class PaperLibraryPlugin extends Plugin {
       selectionSource: context.selectionSource || "unknown",
       rectCoordinateSpace: context.rectCoordinateSpace || "unknown",
       color: normalizedColor,
-      pdfSubtype: "Highlight",
+      pdfSubtype,
       pdfRects: Array.isArray(context.pdfRects) ? context.pdfRects.map((item) => ({ ...item })) : [],
       link: target,
       pdfPath,
