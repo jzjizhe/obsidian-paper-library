@@ -14666,8 +14666,6 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding-left: 8px;
-  border-left: 1px solid var(--background-modifier-border);
 }
 
 .paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-textbox-panel {
