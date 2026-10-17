@@ -14681,20 +14681,31 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-size-row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--background-primary);
   color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
 }
 
-.paperlib-native-pdf-size-input {
-  width: 44px;
-  padding: 2px 4px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
+.paperlib-native-pdf-size-row:focus-within {
+  border-color: var(--interactive-accent);
+}
+
+.paperlib-native-pdf-size-row .paperlib-native-pdf-size-input {
+  width: 30px;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-normal);
   font-size: 11px;
   text-align: center;
