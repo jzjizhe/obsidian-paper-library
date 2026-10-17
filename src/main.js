@@ -7612,11 +7612,19 @@ class PaperLibraryPlugin extends Plugin {
     if (!textLayer || !container.contains(textLayer)) return;
     // 纯选择（无工具激活）：弹出颜色标注条，等用户点颜色后再保存
     if (!state.mode) {
-      const selection = textLayer.ownerDocument?.defaultView?.getSelection?.();
-      if (selection && !selection.isCollapsed && String(selection.toString()).trim()) {
-        this.showNativePdfSelectionToolbar(leaf, textLayer);
-      } else {
-        this.dismissNativePdfSelectionToolbar();
+      const tryShow = () => {
+        const selection = textLayer.ownerDocument?.defaultView?.getSelection?.();
+        if (selection && !selection.isCollapsed && String(selection.toString()).trim()) {
+          this.showNativePdfSelectionToolbar(leaf, textLayer);
+          return true;
+        }
+        return false;
+      };
+      if (!tryShow()) {
+        // 双击选词由浏览器在 pointerup 之后应用，延迟一拍再检查
+        setTimeout(() => {
+          if (!tryShow()) this.dismissNativePdfSelectionToolbar();
+        }, 60);
       }
       return;
     }
@@ -7831,14 +7839,23 @@ class PaperLibraryPlugin extends Plugin {
       title: file?.basename || file?.name || "文档",
       pdfPath: file?.path || ""
     };
-    const pageEl = textLayer.closest(".page[data-page-number], .page");
+    const anchorElement = selection.anchorNode?.nodeType === 3
+      ? selection.anchorNode.parentElement
+      : selection.anchorNode;
+    // 以选区起点所在页为准：事件目标可能落在另一页（跨页拖动），
+    // 用错误页的坐标换算会把高亮放大到整页；起点页信息缺失时回退到事件目标页
+    const anchorPageEl = anchorElement?.closest?.(".page[data-page-number], .page");
+    const anchorPageNumber = Number(anchorPageEl?.dataset?.pageNumber
+      || anchorPageEl?.getAttribute?.("data-page-number"));
+    const pageEl = anchorPageNumber ? anchorPageEl : textLayer.closest(".page[data-page-number], .page");
+    const activeLayer = pageEl?.querySelector?.(".textLayer") || textLayer;
     const page = Number(pageEl?.dataset?.pageNumber || pageEl?.getAttribute?.("data-page-number"));
     if (!page) throw new Error("无法识别当前 PDF 页码");
-    const spans = this.getNativePdfTextSpans(textLayer);
+    const spans = this.getNativePdfTextSpans(activeLayer);
     const closestSpan = (node) => {
       const element = node?.nodeType === 3 ? node.parentElement : node;
       const span = element?.closest?.("span");
-      return span && textLayer.contains(span) ? span : null;
+      return span && activeLayer.contains(span) ? span : null;
     };
     const anchorSpan = closestSpan(selection.anchorNode);
     const focusSpan = closestSpan(selection.focusNode);
@@ -7846,8 +7863,8 @@ class PaperLibraryPlugin extends Plugin {
     const focusIndex = spans.indexOf(focusSpan);
     if (anchorIndex < 0 || focusIndex < 0) throw new Error("无法读取 PDF 文字选区");
     const forward = anchorIndex < focusIndex || (anchorIndex === focusIndex && selection.anchorOffset <= selection.focusOffset);
-    const domRects = this.captureDomSelectionRects(selection.getRangeAt(0), textLayer);
-    const selectionData = await this.getNativePdfSelectionData(file, page, textLayer, domRects);
+    const domRects = this.captureDomSelectionRects(selection.getRangeAt(0), activeLayer);
+    const selectionData = await this.getNativePdfSelectionData(file, page, activeLayer, domRects);
     const fallbackRange = {
       beginIndex: forward ? anchorIndex : focusIndex,
       beginOffset: forward ? selection.anchorOffset : selection.focusOffset,
@@ -7887,7 +7904,10 @@ class PaperLibraryPlugin extends Plugin {
         right: Math.min(bounds.width, rect.right - bounds.left),
         top: Math.max(0, rect.top - bounds.top),
         bottom: Math.min(bounds.height, rect.bottom - bounds.top)
-      }));
+      }))
+      // 其他页的矩形裁剪后只剩退化的零宽/零高条带，直接丢弃；
+      // 否则跨页选区会被放大成整页高亮
+      .filter((rect) => rect.right - rect.left > 0.5 && rect.bottom - rect.top > 0.5);
   }
 
   async getNativePdfSelectionData(file, pageNumber, textLayer, rects) {

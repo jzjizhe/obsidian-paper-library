@@ -1258,6 +1258,20 @@ async function run() {
       assert.equal(nativePlugin.pendingPdfAnnotationSyncs.size, 0, "deleting must purge the pending writeback queue");
       nativePlugin.settings.pdfAnnotationWriteback = "immediate";
 
+      // 跨页选区：其他页的矩形裁剪后必须被丢弃，否则会放大成整页高亮
+      {
+        const layer = { getBoundingClientRect: () => ({ left: 100, top: 100, width: 600, height: 800 }) };
+        const range = {
+          getClientRects: () => [
+            { left: 110, top: 120, right: 400, bottom: 140, width: 290, height: 20 },
+            { left: 110, top: 1200, right: 400, bottom: 1220, width: 290, height: 20 }
+          ]
+        };
+        const rects = nativePlugin.captureDomSelectionRects(range, layer);
+        assert.equal(rects.length, 1, "rects from other pages must be dropped");
+        assert.deepEqual(rects[0], { left: 10, right: 300, top: 20, bottom: 40 });
+      }
+
       assert.equal((await nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } })).id, "annotation-1");
       assert.equal(await nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "missing" } }), null);
       assert.equal(destroyed, 3, "annotation lookup must release PDF.js documents");
