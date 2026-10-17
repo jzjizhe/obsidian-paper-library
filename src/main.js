@@ -6896,6 +6896,11 @@ class PaperLibraryPlugin extends Plugin {
           } catch (error) {
             console.warn("Paper Library: failed to clean empty text boxes", error);
           }
+          try {
+            await this.backfillPdfInkAnnotations(paper, file);
+          } catch (error) {
+            console.warn("Paper Library: failed to queue ink annotations for writeback", error);
+          }
           // 删除被清理/早已删除的文本框可能留下孤儿注解，打开时一并去除
           // 仅在论文的 pdfPath 与当前文件完全一致时执行，避免路径匹配失败误删全部插件注解
           if (normalizePath(paper.pdfPath || "") !== normalizePath(file.path)) return;
@@ -6927,8 +6932,8 @@ class PaperLibraryPlugin extends Plugin {
           }
         });
         this.updateNativePdfToolbarState(container, existingGroup, existingState);
-        this.renderNativePdfInkOverlays(leaf, container);
-        this.renderNativePdfShapeOverlays(leaf, container);
+        void this.renderNativePdfInkOverlays(leaf, container).catch((error) => console.error("Paper Library: failed to render ink overlays", error));
+        void this.renderNativePdfShapeOverlays(leaf, container).catch((error) => console.error("Paper Library: failed to render shape overlays", error));
         void this.renderNativePdfHighlightOverlays(leaf, container);
         void this.renderNativePdfNoteOverlays(leaf, container);
         void this.renderNativePdfTextBoxes(leaf, container).catch((error) => console.error("Paper Library: failed to render text boxes", error));
@@ -7259,8 +7264,8 @@ class PaperLibraryPlugin extends Plugin {
       });
       container.appendChild(group);
       this.updateNativePdfToolbarState(container, group, state);
-      this.renderNativePdfInkOverlays(leaf, container, true);
-      this.renderNativePdfShapeOverlays(leaf, container, true);
+      void this.renderNativePdfInkOverlays(leaf, container, true).catch((error) => console.error("Paper Library: failed to render ink overlays", error));
+      void this.renderNativePdfShapeOverlays(leaf, container, true).catch((error) => console.error("Paper Library: failed to render shape overlays", error));
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
       void this.renderNativePdfNoteOverlays(leaf, container, true);
       void this.renderNativePdfTextBoxes(leaf, container, true).catch((error) => console.error("Paper Library: failed to render text boxes", error));
@@ -7752,27 +7757,41 @@ class PaperLibraryPlugin extends Plugin {
     return svg;
   }
 
-  renderNativePdfShapeOverlays(leaf, container, force = false) {
+  isNativePdfMarkEmbedded(file, mark, embeddedIds) {
+    if (this.settings.pdfAnnotationWriteback === "off" || !mark) return false;
+    const path = normalizePath(mark.pdfPath || file?.path || "");
+    const key = `${path}|${mark.pdfAnnotationId || mark.id}`;
+    if (this.pendingPdfAnnotationSyncs?.has(key)) return false;
+    return Boolean(embeddedIds?.has?.(`paperlib:${mark.pdfAnnotationId || mark.id}`));
+  }
+
+  async renderNativePdfShapeOverlays(leaf, container, force = false) {
     const file = leaf?.view?.file || this.app.workspace.getActiveFile();
     const paper = this.getPaperForPdfFile(file);
     if (!file?.path || !paper) {
       container?.querySelectorAll?.(".paperlib-native-pdf-shape-layer")?.forEach?.((element) => element.remove());
       return;
     }
+    const embeddedIds = this.settings.pdfAnnotationWriteback === "off"
+      ? new Set()
+      : await this.getNativePdfEmbeddedMarkIds(file).catch(() => new Set());
+    if (!container?.isConnected) return;
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
       const shapes = this.getPdfShapes(paper, file.path, pageNumber);
-      const signature = shapes.map((shape) => (
+      const visible = shapes.filter((shape) => !this.isNativePdfMarkEmbedded(file, shape, embeddedIds));
+      const flags = shapes.map((shape) => this.isNativePdfMarkEmbedded(file, shape, embeddedIds) ? 1 : 0).join("");
+      const signature = `${flags}|` + visible.map((shape) => (
         `${shape.id}:${shape.type}:${shape.color}:${shape.width}:${shape.start?.x || 0}:${shape.start?.y || 0}:${shape.end?.x || 0}:${shape.end?.y || 0}`
       )).join("|");
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-shape-layer");
       if (!force && existing?.dataset.signature === signature) return;
-      if (!shapes.length && !existing) return;
+      if (!visible.length && !existing) return;
       const svg = existing || this.ensureNativePdfShapeLayer(pageEl);
       svg.replaceChildren();
       svg.dataset.signature = signature;
-      shapes.forEach((shape) => this.appendNativePdfShape(svg, shape, pageEl));
+      visible.forEach((shape) => this.appendNativePdfShape(svg, shape, pageEl));
     });
   }
 
@@ -7783,30 +7802,37 @@ class PaperLibraryPlugin extends Plugin {
       const file = leaf.view?.file;
       const container = leaf.view?.containerEl;
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
-      this.renderNativePdfShapeOverlays(leaf, container, true);
+      void this.renderNativePdfShapeOverlays(leaf, container, true).catch((error) => console.error("Paper Library: failed to render shape overlays", error));
     });
   }
 
-  renderNativePdfInkOverlays(leaf, container, force = false) {
+  async renderNativePdfInkOverlays(leaf, container, force = false) {
     const file = leaf?.view?.file || this.app.workspace.getActiveFile();
     const paper = this.getPaperForPdfFile(file);
     if (!file?.path || !paper) {
       container?.querySelectorAll?.(".paperlib-native-pdf-ink-layer")?.forEach?.((element) => element.remove());
       return;
     }
+    const embeddedIds = this.settings.pdfAnnotationWriteback === "off"
+      ? new Set()
+      : await this.getNativePdfEmbeddedMarkIds(file).catch(() => new Set());
+    if (!container?.isConnected) return;
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
       const strokes = this.getPdfInkStrokes(paper, file.path, pageNumber);
-      const signature = strokes.map((stroke) => (
+      const visible = strokes.filter((stroke) => !this.isNativePdfMarkEmbedded(file, stroke, embeddedIds));
+      const flags = strokes.map((stroke) => this.isNativePdfMarkEmbedded(file, stroke, embeddedIds) ? 1 : 0).join("");
+      const signature = `${flags}|` + visible.map((stroke) => (
         `${stroke.id}:${stroke.color}:${stroke.width}:${stroke.points?.length || 0}:${stroke.points?.at?.(-1)?.x || 0}:${stroke.points?.at?.(-1)?.y || 0}`
       )).join("|");
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-ink-layer");
       if (!force && existing?.dataset.signature === signature) return;
+      if (!visible.length && !existing) return;
       const svg = existing || this.ensureNativePdfInkLayer(pageEl);
       svg.replaceChildren();
       svg.dataset.signature = signature;
-      strokes.forEach((stroke) => this.appendNativePdfInkPath(svg, stroke));
+      visible.forEach((stroke) => this.appendNativePdfInkPath(svg, stroke));
     });
   }
 
@@ -7817,7 +7843,7 @@ class PaperLibraryPlugin extends Plugin {
       const file = leaf.view?.file;
       const container = leaf.view?.containerEl;
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
-      this.renderNativePdfInkOverlays(leaf, container, true);
+      void this.renderNativePdfInkOverlays(leaf, container, true).catch((error) => console.error("Paper Library: failed to render ink overlays", error));
     });
   }
 
@@ -8019,6 +8045,7 @@ class PaperLibraryPlugin extends Plugin {
             .filter((annotation) => String(annotation?.titleObj?.str || annotation?.title || "") === "Paper Library")
             .map((annotation) => ({
               id: String(annotation.id),
+              subtype: String(annotation.subtype || ""),
               rect: Array.isArray(annotation.rect) ? annotation.rect.map((value) => Number(value) || 0) : []
             }));
           if (own.length) annotations.set(pageNumber, own);
@@ -8070,7 +8097,11 @@ class PaperLibraryPlugin extends Plugin {
     // 因此在视图容器级别按注释 id 全局匹配隐藏；id 全局唯一，无需按页区分。
     const ids = new Set();
     for (const list of annotationsByPage?.values?.() || []) {
-      for (const annotation of list) ids.add(String(annotation.id));
+      for (const annotation of list) {
+        // Ink 注解由 PDF 注释层自己绘制，覆盖层已跳过，不能再隐藏
+        if (String(annotation.subtype || "").toLowerCase() === "ink") continue;
+        ids.add(String(annotation.id));
+      }
     }
     if (!ids.size) return;
     const elements = container?.querySelectorAll?.("[data-annotation-id]") || [];
@@ -8205,11 +8236,7 @@ class PaperLibraryPlugin extends Plugin {
       && mark.box
       && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
     ));
-    const isEmbedded = (mark) => {
-      const pendingKey = `${normalizePath(mark.pdfPath || path)}|${mark.pdfAnnotationId || mark.id}`;
-      if (this.pendingPdfAnnotationSyncs?.has(pendingKey)) return false;
-      return embeddedIds.has(`paperlib:${mark.pdfAnnotationId || mark.id}`);
-    };
+    const isEmbedded = (mark) => this.isNativePdfMarkEmbedded(file, mark, embeddedIds);
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
@@ -9503,7 +9530,7 @@ class PaperLibraryPlugin extends Plugin {
       await this.persistResearchWorkspace(paper, false);
     }
     try {
-      await this.removeLocalPdfAnnotations(records);
+      await this.removeLocalPdfAnnotations([...records, ...strokes, ...shapes]);
     } catch (error) {
       console.error("Paper Library: failed to clear PDF annotations", error);
     }
@@ -13639,6 +13666,132 @@ class PaperLibraryPlugin extends Plugin {
     return true;
   }
 
+  isInkMark(mark) {
+    if (!mark) return false;
+    if (mark.pdfSubtype === "Ink" || mark.type === "ink") return true;
+    return ["line", "arrow", "circle", "ellipse", "rect"].includes(mark.type);
+  }
+
+  getPdfInkPaths(mark, pageSize) {
+    const width = Math.max(1.5, Math.min(8, Number(mark?.width) || 3));
+    const pageWidth = Math.max(1, Number(pageSize?.width) || 612);
+    const pageHeight = Math.max(1, Number(pageSize?.height) || 792);
+    const toPdf = (point) => ({
+      x: Math.max(0, Math.min(1, Number(point?.x) || 0)) * pageWidth,
+      y: (1 - Math.max(0, Math.min(1, Number(point?.y) || 0))) * pageHeight
+    });
+    const pathFromPoints = (points) => {
+      const path = [];
+      (points || []).forEach((point) => {
+        const value = toPdf(point);
+        path.push(value.x, value.y);
+      });
+      if (path.length === 2) path.push(path[0], path[1]);
+      return path;
+    };
+    if (mark.type === "ink") {
+      const path = pathFromPoints(mark.points);
+      return path.length >= 4 ? [path] : [];
+    }
+    const start = toPdf(mark.start);
+    const end = toPdf(mark.end);
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 0.5) return [];
+    if (mark.type === "line") {
+      return [[start.x, start.y, end.x, end.y]];
+    }
+    if (mark.type === "arrow") {
+      const ux = dx / length;
+      const uy = dy / length;
+      const size = Math.max(10, width * 4);
+      const half = size * 0.45;
+      const baseX = end.x - ux * size;
+      const baseY = end.y - uy * size;
+      return [
+        [start.x, start.y, baseX, baseY],
+        [end.x, end.y, baseX - uy * half, baseY + ux * half],
+        [end.x, end.y, baseX + uy * half, baseY - ux * half]
+      ];
+    }
+    if (mark.type === "rect") {
+      return [[start.x, start.y, end.x, start.y, end.x, end.y, start.x, end.y, start.x, start.y]];
+    }
+    // 圆/椭圆：用闭合折线近似
+    const centerX = (start.x + end.x) / 2;
+    const centerY = (start.y + end.y) / 2;
+    const radiusX = Math.abs(end.x - start.x) / 2;
+    const radiusY = Math.abs(end.y - start.y) / 2;
+    if (radiusX < 0.5 || radiusY < 0.5) return [];
+    const path = [];
+    const steps = 48;
+    for (let index = 0; index <= steps; index += 1) {
+      const angle = (Math.PI * 2 * index) / steps;
+      path.push(centerX + radiusX * Math.cos(angle), centerY + radiusY * Math.sin(angle));
+    }
+    return [path];
+  }
+
+  writeLocalPdfInkAnnotation(document, mark) {
+    if (!this.isInkMark(mark)) return false;
+    const page = document.getPage(Math.max(0, Number(mark.page || 1) - 1));
+    if (!page) throw new Error("PDF 页码不存在");
+    const pageSize = page.getSize?.() || { width: 612, height: 792 };
+    const paths = this.getPdfInkPaths(mark, pageSize);
+    if (!paths.length) return false;
+    const annotationId = `paperlib:${mark.pdfAnnotationId || mark.id}`;
+    const annotsName = PDFName.of("Annots");
+    let annots = page.node.lookupMaybe(annotsName, PDFArray);
+    if (!annots) {
+      annots = document.context.obj([]);
+      page.node.set(annotsName, annots);
+    }
+    for (let index = annots.size() - 1; index >= 0; index -= 1) {
+      const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
+      if (!dictionary) continue;
+      if (this.readPdfAnnotationString(document, dictionary, "NM") === annotationId) annots.remove(index);
+    }
+    const xs = [];
+    const ys = [];
+    paths.forEach((path) => {
+      for (let index = 0; index + 1 < path.length; index += 2) {
+        xs.push(path[index]);
+        ys.push(path[index + 1]);
+      }
+    });
+    if (!xs.length) return false;
+    const width = Math.max(1.5, Math.min(8, Number(mark.width) || 3));
+    const pad = Math.max(2, width);
+    const rect = [
+      Math.min(...xs) - pad,
+      Math.min(...ys) - pad,
+      Math.max(...xs) + pad,
+      Math.max(...ys) + pad
+    ];
+    const values = {
+      Type: "Annot",
+      Subtype: "Ink",
+      Rect: rect,
+      C: this.pdfColor(mark.color),
+      CA: 1,
+      F: 4,
+      P: page.ref,
+      Border: [0, 0, width],
+      BS: { W: width, S: "S" }
+    };
+    const annotation = document.context.obj(values);
+    annotation.set(PDFName.of("T"), PDFHexString.fromText("Paper Library"));
+    annotation.set(PDFName.of("Contents"), PDFHexString.fromText(
+      mark.type === "ink" ? "Paper Library ink" : `Paper Library shape (${mark.type})`
+    ));
+    annotation.set(PDFName.of("NM"), PDFHexString.fromText(annotationId));
+    annotation.set(PDFName.of("M"), PDFString.of(this.pdfDate()));
+    annotation.set(PDFName.of("InkList"), document.context.obj(paths));
+    annots.push(document.context.register(annotation));
+    return true;
+  }
+
   pdfColor(colorId) {
     const color = CANVAS_HIGHLIGHT_COLORS.find((item) => item.id === String(colorId || "").toLocaleLowerCase())
       || CANVAS_HIGHLIGHT_COLORS[0];
@@ -13713,7 +13866,9 @@ class PaperLibraryPlugin extends Plugin {
   async upsertLocalPdfAnnotation(mark) {
     if (!mark?.pdfPath) return false;
     if (mark.pdfSubtype === "FreeText" && !String(mark.comment || mark.text || "").trim()) return true;
-    if (mark.pdfSubtype !== "FreeText" && (!Array.isArray(mark.pdfRects) || !mark.pdfRects.length)) return false;
+    if (mark.pdfSubtype !== "FreeText"
+      && !this.isInkMark(mark)
+      && (!Array.isArray(mark.pdfRects) || !mark.pdfRects.length)) return false;
     return this.mutateLocalPdf(mark.pdfPath, async (document) => this.writeLocalPdfAnnotation(document, mark));
   }
 
@@ -13729,6 +13884,7 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   writeLocalPdfAnnotation(document, mark) {
+    if (this.isInkMark(mark)) return this.writeLocalPdfInkAnnotation(document, mark);
     if (mark?.pdfSubtype === "FreeText" && !String(mark.comment || mark.text || "").trim()) return false;
     {
       const page = document.getPage(Math.max(0, Number(mark.page || 1) - 1));
@@ -13852,10 +14008,10 @@ class PaperLibraryPlugin extends Plugin {
     });
     const grouped = new Map();
     (marks || []).forEach((mark) => {
-      if (!mark?.pdfPath || !mark.pdfAnnotationId) return;
+      if (!mark?.pdfPath || (!mark.pdfAnnotationId && !mark.id)) return;
       const path = normalizePath(mark.pdfPath);
       if (!grouped.has(path)) grouped.set(path, new Set());
-      grouped.get(path).add(`paperlib:${mark.pdfAnnotationId}`);
+      grouped.get(path).add(`paperlib:${mark.pdfAnnotationId || mark.id}`);
     });
     for (const [path, ids] of grouped) {
       await this.mutateLocalPdf(path, async (document) => {
@@ -13866,8 +14022,7 @@ class PaperLibraryPlugin extends Plugin {
           for (let index = annots.size() - 1; index >= 0; index -= 1) {
             const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
             if (!dictionary) continue;
-            const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
-            const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+            const value = this.readPdfAnnotationString(document, dictionary, "NM");
             if (!ids.has(value)) continue;
             annots.remove(index);
             changed = true;
@@ -13912,19 +14067,52 @@ class PaperLibraryPlugin extends Plugin {
     }
     entries.forEach(([key]) => this.pendingPdfAnnotationSyncs.delete(key));
     this.pdfAnnotationSyncFailures = this.pdfAnnotationSyncFailures || new Set();
-    let written = 0;
+    const groups = new Map();
     for (const [key, mark] of entries) {
+      const path = normalizePath(mark.pdfPath || "");
+      if (!path) continue;
+      if (!groups.has(path)) groups.set(path, []);
+      groups.get(path).push({ key, mark });
+    }
+    let written = 0;
+    const failEntry = (key, mark, error) => {
+      this.pendingPdfAnnotationSyncs.set(key, mark);
+      console.error("Paper Library: failed to write local PDF annotation", error);
+      if (!this.pdfAnnotationSyncFailures.has(key)) {
+        this.pdfAnnotationSyncFailures.add(key);
+        new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
+      }
+    };
+    for (const [path, list] of groups) {
+      const failed = new Set();
+      let batchWritten = 0;
       try {
-        if (await this.upsertLocalPdfAnnotation(mark)) written += 1;
-        this.pdfAnnotationSyncFailures.delete(key);
+        await this.mutateLocalPdf(path, async (document) => {
+          let changed = false;
+          for (const { key, mark } of list) {
+            try {
+              if (this.writeLocalPdfAnnotation(document, mark)) {
+                changed = true;
+                batchWritten += 1;
+              }
+            } catch (error) {
+              failed.add(key);
+              console.error("Paper Library: failed to write one PDF annotation", error);
+            }
+          }
+          return changed;
+        });
       } catch (error) {
-        // 写入失败时保留队列项，下次离开视图/失焦时还能重试
-        this.pendingPdfAnnotationSyncs.set(key, mark);
-        console.error("Paper Library: failed to write local PDF annotation", error);
-        if (!this.pdfAnnotationSyncFailures.has(key)) {
-          this.pdfAnnotationSyncFailures.add(key);
-          new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
+        for (const { key, mark } of list) {
+          if (!failed.has(key)) failed.add(key);
+          failEntry(key, mark, error);
         }
+        continue;
+      }
+      written += batchWritten;
+      for (const { key, mark } of list) {
+        if (failed.has(key)) failEntry(key, mark, new Error("写入失败"));
+        else this.pdfAnnotationSyncFailures.delete(key);
       }
     }
     const paths = new Set(entries.map(([, mark]) => normalizePath(mark.pdfPath || "")).filter(Boolean));
@@ -13953,6 +14141,14 @@ class PaperLibraryPlugin extends Plugin {
       for (const mark of paper.annotations || []) {
         if (normalizePath(mark.pdfPath || paper.pdfPath || "") !== path) continue;
         valid.add(`paperlib:${mark.pdfAnnotationId || mark.id}`);
+      }
+      for (const stroke of this.ensureResearchWorkspace(paper).inkStrokes || []) {
+        if (normalizePath(stroke.pdfPath || paper.pdfPath || "") !== path) continue;
+        valid.add(`paperlib:${stroke.pdfAnnotationId || stroke.id}`);
+      }
+      for (const shape of this.ensureResearchWorkspace(paper).pdfShapes || []) {
+        if (normalizePath(shape.pdfPath || paper.pdfPath || "") !== path) continue;
+        valid.add(`paperlib:${shape.pdfAnnotationId || shape.id}`);
       }
     }
     return this.mutateLocalPdf(path, async (document) => {
@@ -14416,7 +14612,7 @@ class PaperLibraryPlugin extends Plugin {
           console.warn("Paper Library: failed to restore text box note entry", error);
         }
       }
-      if (source === "canvas-highlight" || source === "paper-annotation") {
+      if (source === "canvas-highlight" || source === "paper-annotation" || source === "ink" || source === "shape") {
         try {
           await this.syncLocalPdfAnnotation(record);
         } catch (error) {
@@ -14605,6 +14801,30 @@ class PaperLibraryPlugin extends Plugin {
     ));
   }
 
+  async backfillPdfInkAnnotations(paper, file) {
+    const mode = this.settings.pdfAnnotationWriteback;
+    if (mode === "off" || !paper?.id || !file?.path) return 0;
+    const workspace = this.ensureResearchWorkspace(paper);
+    const path = normalizePath(file.path);
+    const embeddedIds = await this.getNativePdfEmbeddedMarkIds(file).catch(() => new Set());
+    const marks = [
+      ...(workspace.inkStrokes || []),
+      ...(workspace.pdfShapes || [])
+    ].filter((mark) => (
+      normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+      && !embeddedIds.has(`paperlib:${mark.pdfAnnotationId || mark.id}`)
+      && !this.pendingPdfAnnotationSyncs.has(`${path}|${mark.pdfAnnotationId || mark.id}`)
+    ));
+    if (!marks.length) return 0;
+    for (const mark of marks) {
+      this.pendingPdfAnnotationSyncs.set(`${path}|${mark.pdfAnnotationId || mark.id}`, mark);
+    }
+    if (mode === "immediate") {
+      await this.flushPdfAnnotationSyncs();
+    }
+    return marks.length;
+  }
+
   schedulePdfOverlayPersist() {
     // 画笔/形状可能每秒产生很多次保存，合并成一次 settings 写入，避免反复重写整个 data.json
     if (this.pdfOverlayPersistTimer) clearTimeout(this.pdfOverlayPersistTimer);
@@ -14628,6 +14848,7 @@ class PaperLibraryPlugin extends Plugin {
     const stroke = {
       id: source.id || workspaceId("ink"),
       type: "ink",
+      pdfSubtype: "Ink",
       page: Math.max(1, Number(source.page) || 1),
       pdfPath: normalizePath(source.pdfPath || paper.pdfPath || ""),
       color: CANVAS_HIGHLIGHT_COLORS.some((item) => item.id === source.color) ? source.color : "yellow",
@@ -14645,6 +14866,9 @@ class PaperLibraryPlugin extends Plugin {
       this.recordNativePdfUndoAction(paper, stroke.pdfPath, "create", [{ source: "ink", record: stroke }]);
     }
     this.schedulePdfOverlayPersist();
+    void this.syncLocalPdfAnnotation(stroke).catch((error) => (
+      console.error("Paper Library: failed to write ink annotation", error)
+    ));
     this.refreshResearchPdfHighlights(paper);
     return true;
   }
@@ -14661,6 +14885,13 @@ class PaperLibraryPlugin extends Plugin {
     workspace.inkStrokes = workspace.inkStrokes.filter((stroke) => stroke.id !== strokeId);
     if (workspace.inkStrokes.length === before) return false;
     this.schedulePdfOverlayPersist();
+    if (removed && this.settings.pdfAnnotationWriteback !== "off") {
+      try {
+        await this.removeLocalPdfAnnotations([removed]);
+      } catch (error) {
+        console.error("Paper Library: failed to remove ink annotation from PDF", error);
+      }
+    }
     this.refreshResearchPdfHighlights(paper);
     if (!this.nativePdfUndoSuppressed) new Notice("已删除画笔标注");
     return true;
@@ -14688,6 +14919,7 @@ class PaperLibraryPlugin extends Plugin {
     const shape = {
       id: source.id || workspaceId("shape"),
       type: ["line", "arrow", "circle", "ellipse", "rect"].includes(source.type) ? source.type : "line",
+      pdfSubtype: "Ink",
       page: Math.max(1, Number(source.page) || 1),
       pdfPath: normalizePath(source.pdfPath || paper.pdfPath || ""),
       color: CANVAS_HIGHLIGHT_COLORS.some((item) => item.id === source.color) ? source.color : "yellow",
@@ -14703,6 +14935,9 @@ class PaperLibraryPlugin extends Plugin {
       this.recordNativePdfUndoAction(paper, shape.pdfPath, "create", [{ source: "shape", record: shape }]);
     }
     this.schedulePdfOverlayPersist();
+    void this.syncLocalPdfAnnotation(shape).catch((error) => (
+      console.error("Paper Library: failed to write shape annotation", error)
+    ));
     this.refreshNativePdfShapeOverlays(paper);
     return true;
   }
@@ -14719,6 +14954,13 @@ class PaperLibraryPlugin extends Plugin {
     workspace.pdfShapes = workspace.pdfShapes.filter((shape) => shape.id !== shapeId);
     if (workspace.pdfShapes.length === before) return false;
     this.schedulePdfOverlayPersist();
+    if (removed && this.settings.pdfAnnotationWriteback !== "off") {
+      try {
+        await this.removeLocalPdfAnnotations([removed]);
+      } catch (error) {
+        console.error("Paper Library: failed to remove shape annotation from PDF", error);
+      }
+    }
     this.refreshNativePdfShapeOverlays(paper);
     if (!this.nativePdfUndoSuppressed) new Notice("已删除形状");
     return true;

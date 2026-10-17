@@ -80,6 +80,57 @@ async function run() {
     "an empty text box must not create an annotation"
   );
 
+  // 画笔/形状写成 Ink 注解：InkList 路径、NM、BS 宽度必须正确
+  const inkDocument = await PDFDocument.create();
+  inkDocument.addPage([504, 720]);
+  const inkMark = {
+    id: "ink-test",
+    type: "ink",
+    pdfSubtype: "Ink",
+    pdfPath: "Papers/test.pdf",
+    page: 1,
+    color: "blue",
+    width: 4,
+    points: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.35 }, { x: 0.6, y: 0.25 }]
+  };
+  assert.equal(plugin.writeLocalPdfAnnotation(inkDocument, inkMark), true);
+  assert.equal(plugin.writeLocalPdfAnnotation(inkDocument, inkMark), true);
+  const inkAnnots = inkDocument.getPage(0).node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  assert.equal(inkAnnots.size(), 1, "rewriting an ink mark must replace the old annotation");
+  const inkDict = inkDocument.context.lookup(inkAnnots.get(0));
+  assert.equal(inkDict.get(PDFName.of("Subtype")).toString(), "/Ink");
+  assert.equal(
+    inkDocument.context.lookupMaybe(inkDict.get(PDFName.of("NM")), PDFString, PDFHexString).decodeText(),
+    "paperlib:ink-test"
+  );
+  const inkList = inkDocument.context.lookupMaybe(inkDict.get(PDFName.of("InkList")), PDFArray);
+  assert.equal(inkList.size(), 1);
+  assert.equal(inkList.get(0).size(), 6, "three points must produce six coordinates");
+  const inkBorder = inkDocument.context.lookupMaybe(inkDict.get(PDFName.of("BS")), PDFDict);
+  assert.equal(inkBorder.get(PDFName.of("W")).asNumber(), 4);
+
+  // 箭头形状写成三条 Ink 路径
+  const arrowMark = {
+    id: "arrow-test", type: "arrow", pdfSubtype: "Ink", pdfPath: "Papers/test.pdf",
+    page: 1, color: "red", width: 3,
+    start: { x: 0.1, y: 0.2 }, end: { x: 0.6, y: 0.4 }
+  };
+  assert.equal(plugin.writeLocalPdfAnnotation(inkDocument, arrowMark), true);
+  const arrowAnnots = inkDocument.getPage(0).node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  assert.equal(arrowAnnots.size(), 2);
+  const arrowDict = inkDocument.context.lookup(arrowAnnots.get(1));
+  const arrowList = inkDocument.context.lookupMaybe(arrowDict.get(PDFName.of("InkList")), PDFArray);
+  assert.equal(arrowList.size(), 3, "an arrow must have one shaft and two head strokes");
+
+  // 内嵌判断：有写回记录且不在待写队列时才隐藏覆盖层
+  plugin.settings.pdfAnnotationWriteback = "on-leave";
+  plugin.pendingPdfAnnotationSyncs = new Map();
+  const embedded = new Set(["paperlib:ink-test"]);
+  const file = { path: "Papers/test.pdf" };
+  assert.equal(plugin.isNativePdfMarkEmbedded(file, inkMark, embedded), true);
+  plugin.pendingPdfAnnotationSyncs.set("Papers/test.pdf|ink-test", inkMark);
+  assert.equal(plugin.isNativePdfMarkEmbedded(file, inkMark, embedded), false);
+
   console.log("PDF annotation writeback tests passed.");
 }
 
