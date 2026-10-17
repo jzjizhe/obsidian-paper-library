@@ -588,7 +588,7 @@ class PaperLibraryPlugin extends Plugin {
           return;
         }
         try {
-          const mark = await this.createPdfTextBox(paper, file, 1, { x: 0.5, y: 0.2, width: 0.02 }, 18, "default");
+          const mark = await this.createPdfTextBox(paper, file, 1, { x: 0.5, y: 0.2, width: 0.02 }, 18, "orange");
           new Notice(mark ? `已插入测试文本框：${mark.id}` : "插入返回空（参数校验未通过）");
         } catch (error) {
           console.error("Paper Library: debug textbox insert failed", error);
@@ -6868,7 +6868,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "default"), paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6895,13 +6895,13 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "default"), paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 18, textboxColor: String(this.settings.pdfTextBoxTextColor || "orange"), paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
       state.inkWidth ||= 4;
       state.textboxFontSize ||= Number(this.settings.pdfTextBoxFontSize) || 18;
-      state.textboxColor ||= String(this.settings.pdfTextBoxTextColor || "default");
+      state.textboxColor ||= String(this.settings.pdfTextBoxTextColor || "orange");
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -7000,8 +7000,8 @@ class PaperLibraryPlugin extends Plugin {
         event.stopPropagation();
         if (event.key === "Enter") { event.preventDefault(); commitSize(); sizeInput.blur(); }
       });
-      sizeRow.appendChild(sizeLabel);
       sizeRow.appendChild(sizeInput);
+      sizeRow.appendChild(sizeLabel);
       textboxPanel.appendChild(sizeRow);
       const textColorRow = document.createElement("div");
       textColorRow.className = "paperlib-native-pdf-text-colors";
@@ -8082,7 +8082,7 @@ class PaperLibraryPlugin extends Plugin {
     return `${red.toFixed(3)} ${green.toFixed(3)} ${blue.toFixed(3)} rg`;
   }
 
-  async createPdfTextBox(paper, file, pageNumber, box, fontSize = null, textColor = "default") {
+  async createPdfTextBox(paper, file, pageNumber, box, fontSize = null, textColor = "orange") {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !file?.path || !pageNumber) return null;
     const id = workspaceId("textbox");
@@ -8096,7 +8096,7 @@ class PaperLibraryPlugin extends Plugin {
       selectionSource: "textbox",
       rectCoordinateSpace: "page-relative",
       fontSize: Math.max(8, Math.min(48, Number(fontSize) || Number(this.settings.pdfTextBoxFontSize) || 18)),
-      textColor: PDF_TEXT_COLORS.some((color) => color.id === textColor) ? textColor : "default",
+      textColor: PDF_TEXT_COLORS.some((color) => color.id === textColor) ? textColor : "orange",
       color: "yellow",
       pdfSubtype: "FreeText",
       box: { x: box.x, y: box.y, width: box.width || 0.02 },
@@ -8517,7 +8517,7 @@ class PaperLibraryPlugin extends Plugin {
       sizeInput.value = String(Number(state.textboxFontSize) || 18);
     }
     group.querySelectorAll(".paperlib-native-pdf-text-color").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.textColor === (state.textboxColor || "default"));
+      button.classList.toggle("is-active", button.dataset.textColor === (state.textboxColor || "orange"));
     });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
       "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline", "textbox"].includes(state.mode))
