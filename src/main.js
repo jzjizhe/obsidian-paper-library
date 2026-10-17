@@ -6886,9 +6886,21 @@ class PaperLibraryPlugin extends Plugin {
       this.nativePdfEmptyTextBoxCleanup = this.nativePdfEmptyTextBoxCleanup || new Set();
       if (paper && file?.path && !this.nativePdfEmptyTextBoxCleanup.has(container)) {
         this.nativePdfEmptyTextBoxCleanup.add(container);
-        void this.cleanupEmptyPdfTextBoxes(paper, file.path).catch((error) => (
-          console.warn("Paper Library: failed to clean empty text boxes", error)
-        ));
+        void (async () => {
+          try {
+            await this.cleanupEmptyPdfTextBoxes(paper, file.path);
+          } catch (error) {
+            console.warn("Paper Library: failed to clean empty text boxes", error);
+          }
+          // 删除被清理/早已删除的文本框可能留下孤儿注解，打开时一并去除
+          // 仅在论文的 pdfPath 与当前文件完全一致时执行，避免路径匹配失败误删全部插件注解
+          if (normalizePath(paper.pdfPath || "") !== normalizePath(file.path)) return;
+          try {
+            await this.pruneLocalPdfAnnotations(file.path);
+          } catch (error) {
+            console.warn("Paper Library: failed to prune stale PDF annotations", error);
+          }
+        })();
       }
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
@@ -7816,6 +7828,47 @@ class PaperLibraryPlugin extends Plugin {
     return promise;
   }
 
+  getNativePdfEmbeddedMarkIds(file) {
+    // 读取 PDF 里已经写回的 paperlib 注解 NM，用于判断文本框是否已经有内嵌副本
+    if (!file?.path) return Promise.resolve(new Set());
+    const path = normalizePath(file.path);
+    this.nativePdfEmbeddedMarkIdsCache = this.nativePdfEmbeddedMarkIdsCache || new Map();
+    return (async () => {
+      let stat = null;
+      try {
+        stat = await this.app.vault.adapter?.stat?.(path);
+      } catch (error) {
+        stat = null;
+      }
+      const key = `${path}|${stat?.mtime || 0}|${stat?.size || 0}`;
+      const cached = this.nativePdfEmbeddedMarkIdsCache.get(key);
+      if (cached) return cached;
+      const promise = (async () => {
+        const buffer = await this.readPdfBinary(file);
+        const document = await PDFDocument.load(buffer, { updateMetadata: false });
+        const ids = new Set();
+        for (const page of document.getPages()) {
+          const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+          if (!annots) continue;
+          for (let index = 0; index < annots.size(); index += 1) {
+            const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
+            if (!dictionary) continue;
+            const nm = this.readPdfAnnotationString(document, dictionary, "NM");
+            if (nm.startsWith("paperlib:")) ids.add(nm);
+          }
+        }
+        return ids;
+      })();
+      this.nativePdfEmbeddedMarkIdsCache.set(key, promise);
+      if (this.nativePdfEmbeddedMarkIdsCache.size > 24) {
+        const oldest = this.nativePdfEmbeddedMarkIdsCache.keys().next().value;
+        this.nativePdfEmbeddedMarkIdsCache.delete(oldest);
+      }
+      promise.catch(() => this.nativePdfEmbeddedMarkIdsCache.delete(key));
+      return promise;
+    })();
+  }
+
   ensureNativePdfHighlightLayer(pageEl) {
     let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
     if (layer?.tagName?.toLocaleLowerCase?.() === "svg") return layer;
@@ -8123,12 +8176,20 @@ class PaperLibraryPlugin extends Plugin {
     }
     const path = normalizePath(file.path);
     const sizes = await this.getNativePdfPageSizes(file).catch(() => null);
+    const embeddedIds = this.settings.pdfAnnotationWriteback === "off"
+      ? new Set()
+      : await this.getNativePdfEmbeddedMarkIds(file).catch(() => new Set());
     if (!container?.isConnected) return;
     const boxes = (paper.annotations || []).filter((mark) => (
       mark.pdfSubtype === "FreeText"
       && mark.box
       && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
     ));
+    const isEmbedded = (mark) => {
+      const pendingKey = `${normalizePath(mark.pdfPath || path)}|${mark.pdfAnnotationId || mark.id}`;
+      if (this.pendingPdfAnnotationSyncs?.has(pendingKey)) return false;
+      return embeddedIds.has(`paperlib:${mark.pdfAnnotationId || mark.id}`);
+    };
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
@@ -8138,8 +8199,9 @@ class PaperLibraryPlugin extends Plugin {
       const pageRect = pageEl.getBoundingClientRect?.();
       const scale = dims?.width && pageRect?.width ? pageRect.width / dims.width : 1;
       const pageBoxes = boxes.filter((mark) => Number(mark.page) === pageNumber);
+      const embeddedFlags = new Map(pageBoxes.map((mark) => [mark.id, isEmbedded(mark)]));
       const signature = `${Math.round(pageRect?.width || 0)}|` + pageBoxes.map((mark) => (
-        `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}`
+        `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}:${embeddedFlags.get(mark.id) ? 1 : 0}`
       )).join("|");
       let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
       if (!force && layer?.dataset.signature === signature) return;
@@ -8150,7 +8212,7 @@ class PaperLibraryPlugin extends Plugin {
       }
       layer.replaceChildren();
       layer.dataset.signature = signature;
-      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl, scale));
+      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl, scale, embeddedFlags.get(mark.id)));
     });
     // pdf.js 的注释层可能在页面渲染后才创建，写回后的 FreeText 会和覆盖卡片叠成两份；
     // 这里晚一点再隐藏一次，覆盖异步创建的注释节点。
@@ -8177,12 +8239,13 @@ class PaperLibraryPlugin extends Plugin {
     await Promise.all(jobs);
   }
 
-  appendPdfTextBoxCard(layer, mark, paper, pageEl, scale = 1) {
+  appendPdfTextBoxCard(layer, mark, paper, pageEl, scale = 1, embedded = false) {
     const box = mark.box || { x: 0.6, y: 0.3, width: 0.02 };
     const x = Math.max(0, Math.min(0.94, Number(box.x) || 0));
     const y = Math.max(-0.3, Math.min(1.3, Number(box.y) || 0));
     const card = document.createElement("div");
     card.className = "paperlib-pdf-textbox-card";
+    if (embedded) card.classList.add("is-embedded");
     card.dataset.markId = mark.id;
     card.style.left = `${x * 100}%`;
     card.style.top = `${y * 100}%`;
@@ -8198,6 +8261,7 @@ class PaperLibraryPlugin extends Plugin {
 
     const enterEdit = () => {
       card.dataset.editing = "true";
+      card.classList.remove("is-embedded");
       card.classList.add("is-editing");
       content.setAttribute("contenteditable", "true");
       content.focus();
@@ -8228,6 +8292,11 @@ class PaperLibraryPlugin extends Plugin {
       const trimmed = value.trim();
       if (!trimmed) {
         void this.deletePdfTextBox(paper, mark);
+        return;
+      }
+      // 已写回的文本框只是点开又失焦：不触发写回队列，恢复隐藏状态避免叠影
+      if (embedded && value === String(mark.comment || "")) {
+        card.classList.add("is-embedded");
         return;
       }
       const pageRect = pageEl.getBoundingClientRect?.();
@@ -8279,6 +8348,8 @@ class PaperLibraryPlugin extends Plugin {
       if (card.dataset.editing === "true") return;
       event.preventDefault();
       event.stopPropagation();
+      // 内嵌文本框平时只显示 PDF 里的文字；一旦拖动/点击就先显示卡片，避免用户看不到操作对象
+      card.classList.remove("is-embedded");
       press = { startX: event.clientX, startY: event.clientY, x, y, moved: false };
       window.addEventListener("pointermove", move, true);
       window.addEventListener("pointerup", up, true);

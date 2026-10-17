@@ -14920,6 +14920,24 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   cursor: text;
 }
 
+/* 已写回 PDF 的文本框：隐藏覆盖卡片，直接显示 PDF 里的文字，避免两份文字偏移叠影 */
+.paperlib-pdf-textbox-card.is-embedded {
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.paperlib-pdf-textbox-card.is-embedded .paperlib-pdf-textbox-content {
+  color: transparent !important;
+}
+
+.paperlib-pdf-textbox-card.is-embedded:hover {
+  border-color: color-mix(in srgb, var(--color-purple, #a855f7) 55%, transparent);
+  background: color-mix(in srgb, var(--background-primary) 35%, transparent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+}
+
 .paperlib-pdf-textbox-content {
   min-height: 14px;
   padding: 1px 3px;
