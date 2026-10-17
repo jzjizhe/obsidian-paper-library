@@ -8011,17 +8011,18 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   getPdfTextBoxFontSize(mark) {
-    const value = Number(mark?.fontSize) || Number(this.settings.pdfTextBoxFontSize) || 18;
+    // 已有标注按自身保存的字号渲染；缺失时回退旧默认值，避免修改全局设置导致旧框外观变化
+    const value = mark ? Number(mark.fontSize) || 11 : Number(this.settings.pdfTextBoxFontSize) || 18;
     return Math.max(8, Math.min(48, value));
   }
 
   getPdfTextBoxTextColorValue(mark) {
-    const id = String(mark?.textColor || this.settings.pdfTextBoxTextColor || "default");
+    const id = String(mark?.textColor || "default");
     return (PDF_TEXT_COLORS.find((color) => color.id === id) || PDF_TEXT_COLORS[0]).value;
   }
 
   pdfTextColorOperator(mark) {
-    const id = String(mark?.textColor || this.settings.pdfTextBoxTextColor || "default");
+    const id = String(mark?.textColor || "default");
     if (id === "default") return "0 g";
     const hex = String((PDF_TEXT_COLORS.find((color) => color.id === id) || {}).value || "#000000").replace("#", "");
     const red = parseInt(hex.slice(0, 2), 16) / 255;
