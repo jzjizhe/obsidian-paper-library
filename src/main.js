@@ -6218,6 +6218,7 @@ class PaperLibraryPlugin extends Plugin {
     });
     this.refreshNativePdfInkOverlays(paper);
     this.refreshNativePdfHighlightOverlays(paper);
+    this.refreshNativePdfNoteOverlays(paper);
   }
 
   getDesktopPluginPath(relativePath = "") {
@@ -6863,6 +6864,7 @@ class PaperLibraryPlugin extends Plugin {
         this.updateNativePdfToolbarState(container, existingGroup, existingState);
         this.renderNativePdfInkOverlays(leaf, container);
         void this.renderNativePdfHighlightOverlays(leaf, container);
+        void this.renderNativePdfNoteOverlays(leaf, container);
         this.ensureNativePdfFigureDragZones(leaf, container, existingState);
         return;
       }
@@ -7081,6 +7083,7 @@ class PaperLibraryPlugin extends Plugin {
       this.updateNativePdfToolbarState(container, group, state);
       this.renderNativePdfInkOverlays(leaf, container, true);
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
+      void this.renderNativePdfNoteOverlays(leaf, container, true);
       this.ensureNativePdfFigureDragZones(leaf, container, state);
       if (!this.nativePdfBindings.has(container)) {
         const pointerDown = (event) => {
@@ -7663,6 +7666,89 @@ class PaperLibraryPlugin extends Plugin {
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
     });
+  }
+
+  async renderNativePdfNoteOverlays(leaf, container, force = false) {
+    const file = leaf?.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    if (!file?.path || !paper) {
+      container?.querySelectorAll?.(".paperlib-native-pdf-note-layer")?.forEach?.((element) => element.remove());
+      return;
+    }
+    const path = normalizePath(file.path);
+    const notes = (paper.annotations || []).filter((mark) => (
+      mark.pdfSubtype === "Text"
+      && String(mark.comment || "").trim()
+      && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+      && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+    ));
+    const sizes = await this.getNativePdfPageSizes(file).catch(() => null);
+    if (!sizes || !container.isConnected) return;
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+      const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+      const dims = sizes.get(pageNumber);
+      if (!pageNumber || !dims?.width || !dims?.height) return;
+      const pageNotes = notes.filter((mark) => Number(mark.page) === pageNumber);
+      const signature = pageNotes.map((mark) => `${mark.id}:${String(mark.comment || "").length}`).join("|");
+      let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-note-layer");
+      if (!force && layer?.dataset.signature === signature) return;
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "paperlib-native-pdf-note-layer";
+        pageEl.appendChild(layer);
+      }
+      layer.replaceChildren();
+      layer.dataset.signature = signature;
+      pageNotes.forEach((mark) => {
+        this.appendPdfNoteBadge(layer, mark, (box) => ({
+          left: `${Math.max(box[0], box[2]) / dims.width * 100}%`,
+          top: `${(1 - Math.max(box[1], box[3]) / dims.height) * 100}%`
+        }));
+      });
+    });
+  }
+
+  refreshNativePdfNoteOverlays(paper) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !this.app.workspace?.getLeavesOfType) return;
+    this.app.workspace.getLeavesOfType("pdf").forEach((leaf) => {
+      const file = leaf.view?.file;
+      const container = leaf.view?.containerEl;
+      if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
+      void this.renderNativePdfNoteOverlays(leaf, container, true);
+    });
+  }
+
+  appendPdfNoteBadge(layer, mark, position) {
+    const box = this.getPdfRectsUnion(mark.pdfRects);
+    if (!box) return;
+    const { left, top } = position(box);
+    const badge = document.createElement("button");
+    badge.className = "paperlib-pdf-note-badge";
+    badge.type = "button";
+    badge.title = String(mark.comment || "");
+    badge.setAttribute("aria-label", `批注：${String(mark.comment || "")}`);
+    badge.style.left = left;
+    badge.style.top = top;
+    const icon = document.createElement("span");
+    icon.className = "paperlib-pdf-note-badge-icon";
+    setPaperlibIcon(icon, "sticky-note");
+    badge.appendChild(icon);
+    const label = document.createElement("span");
+    label.className = "paperlib-pdf-note-badge-text";
+    label.textContent = truncate(String(mark.comment || ""), 48);
+    badge.appendChild(label);
+    const popup = document.createElement("div");
+    popup.className = "paperlib-pdf-note-popup";
+    popup.textContent = String(mark.comment || "");
+    badge.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      badge.classList.toggle("is-open");
+    });
+    badge.addEventListener("pointerdown", (event) => event.stopPropagation());
+    layer.appendChild(badge);
+    layer.appendChild(popup);
   }
 
   recordPdfReadingPosition(paper, page) {
@@ -8399,6 +8485,7 @@ class PaperLibraryPlugin extends Plugin {
       console.error("Paper Library: failed to clear PDF annotations", error);
     }
     this.refreshResearchPdfHighlights(paper);
+    this.refreshNativePdfNoteOverlays(paper);
     this.refreshViews();
     return records.length;
   }
@@ -12861,6 +12948,7 @@ class PaperLibraryPlugin extends Plugin {
     this.settings.defaultHighlightColor = normalizedColor || this.settings.defaultHighlightColor;
     await this.saveSettings();
     await this.syncLocalPdfAnnotation(annotationRecord);
+    this.refreshNativePdfNoteOverlays(paper);
     if (this.app.workspace?.getLeavesOfType) this.refreshViews();
     if (options.openWorkspace) await this.openResearchWorkspace(paper, context.sourceLeaf, true);
     new Notice(`已拉入研究工作区，并同步到论文笔记（第 ${page} 页）`);
@@ -13132,6 +13220,7 @@ class PaperLibraryPlugin extends Plugin {
       await this.app.vault.modify(noteFile, content);
     }
     await this.removeLocalPdfAnnotations([entry.record]);
+    this.refreshNativePdfNoteOverlays(paper);
     this.refreshViews();
     return true;
   }

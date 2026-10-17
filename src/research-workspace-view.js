@@ -1828,9 +1828,38 @@ class PaperResearchWorkspaceView extends ItemView {
         this.plugin.getPdfInkStrokes(paper, paper.pdfPath, pageNumber)
           .forEach((stroke) => this.renderPdfInkPath(inkLayer, stroke));
       }
+      this.renderPdfNoteBadges(pageWrap, paper, pageNumber, pageData.viewport);
       refreshed = true;
     });
     return refreshed;
+  }
+
+  renderPdfNoteBadges(pageWrap, paper, pageNumber, viewport) {
+    if (!pageWrap || !paper || !viewport?.convertToViewportRectangle) return;
+    const path = normalizePath(paper.pdfPath || "");
+    const notes = (paper.annotations || []).filter((mark) => (
+      mark.pdfSubtype === "Text"
+      && String(mark.comment || "").trim()
+      && Number(mark.page) === Number(pageNumber)
+      && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+      && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+    ));
+    let layer = pageWrap.querySelector(":scope > .paperlib-pdf-note-layer");
+    if (!notes.length) {
+      layer?.remove();
+      return;
+    }
+    if (!layer) layer = pageWrap.createDiv({ cls: "paperlib-pdf-note-layer" });
+    layer.replaceChildren();
+    notes.forEach((mark) => {
+      const box = this.plugin.getPdfRectsUnion(mark.pdfRects);
+      if (!box) return;
+      const rect = viewport.convertToViewportRectangle(box);
+      this.plugin.appendPdfNoteBadge(layer, mark, () => ({
+        left: `${Math.max(rect[0], rect[2])}px`,
+        top: `${Math.min(rect[1], rect[3])}px`
+      }));
+    });
   }
 
   showPdfHighlightMenu(event, paper, pageNumber, textItems = null) {

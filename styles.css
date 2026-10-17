@@ -14676,3 +14676,75 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 .paperlib-ink-width.is-active .paperlib-ink-width-dot {
   background: var(--interactive-accent);
 }
+
+/* PDF 批注气泡（原生 + 画布） */
+.paperlib-native-pdf-note-layer,
+.paperlib-pdf-note-layer {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.paperlib-pdf-note-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 200px;
+  padding: 2px 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+  color: var(--text-normal);
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translate(4px, -100%);
+}
+
+.paperlib-pdf-note-badge:hover {
+  background: var(--background-modifier-hover);
+}
+
+.paperlib-pdf-note-badge-icon {
+  display: flex;
+  flex: 0 0 12px;
+  color: var(--text-accent);
+}
+
+.paperlib-pdf-note-badge-icon .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.paperlib-pdf-note-badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paperlib-pdf-note-popup {
+  position: absolute;
+  z-index: 4;
+  display: none;
+  max-width: 280px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  pointer-events: auto;
+}
+
+.paperlib-pdf-note-badge.is-open + .paperlib-pdf-note-popup {
+  display: block;
+}
