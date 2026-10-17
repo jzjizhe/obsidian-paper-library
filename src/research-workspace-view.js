@@ -575,6 +575,8 @@ class PaperResearchWorkspaceView extends ItemView {
     this.pdfCache?.pages?.clear?.();
     this.pdfCache?.pageViews?.clear?.();
     this.pdfHost = null;
+    this.pdfPageInput = null;
+    this.pdfCurrentPage = 1;
   }
 
   workspacePdfRenderRatio(viewport, pageElement) {
@@ -619,8 +621,12 @@ class PaperResearchWorkspaceView extends ItemView {
     if (!host?.isConnected || !cache?.pageViews) return;
     const bounds = host.getBoundingClientRect?.();
     const margin = bounds ? Math.max(120, bounds.height * 0.5) : 0;
+    const probe = bounds ? bounds.top + 24 : 0;
+    let topPage = null;
     for (const record of cache.pageViews.values()) {
       const rect = record.element.getBoundingClientRect?.();
+      // pageViews 按页码有序：最后一个顶边在视口探针上方/穿过探针的页即当前页
+      if (rect && bounds && rect.top <= probe) topPage = record.pageNumber;
       const near = rect && bounds ? rect.bottom >= bounds.top - margin && rect.top <= bounds.bottom + margin
         : record.pageNumber <= 2;
       record.near = Boolean(near);
@@ -640,7 +646,11 @@ class PaperResearchWorkspaceView extends ItemView {
         record.element = placeholder;
       }
     }
-    this.updateWorkspacePdfProgress();
+    const page = topPage || 1;
+    if (page !== this.pdfCurrentPage) {
+      this.pdfCurrentPage = page;
+      this.updateWorkspacePdfPageIndicator();
+    }
   }
 
   scheduleWorkspacePdfVisibility() {
@@ -651,8 +661,47 @@ class PaperResearchWorkspaceView extends ItemView {
     }, 60);
   }
 
-  updateWorkspacePdfProgress() {
-    this.pdfPageStatus?.setText(`${this.pdfCache?.document?.numPages || 0} 页 · 按需载入 · 当前 ${this.pdfCache?.pages?.size || 0} 页`);
+  updateWorkspacePdfPageIndicator() {
+    const input = this.pdfPageInput;
+    if (!input?.isConnected) return;
+    // 输入框聚焦时不覆盖用户正在键入的页码
+    if (input.ownerDocument?.activeElement === input) return;
+    input.value = String(this.pdfCurrentPage || 1);
+  }
+
+  scrollWorkspacePdfToPage(pageNumber, smooth = false) {
+    const cache = this.pdfCache;
+    const host = this.pdfHost;
+    if (!host?.isConnected || !cache?.document) return;
+    const count = cache.document.numPages || 0;
+    if (!count) return;
+    const page = Math.max(1, Math.min(count, Math.round(Number(pageNumber) || 1)));
+    const record = cache.pageViews?.get(page);
+    if (!record?.element?.isConnected) return;
+    // 固定目标页，防止渲染完成前被可见性回收
+    record.pinned = (record.pinned || 0) + 1;
+    void Promise.resolve(this.ensureWorkspacePdfPage(page)).finally(() => { record.pinned -= 1; });
+    const hostRect = host.getBoundingClientRect?.();
+    const pageRect = record.element.getBoundingClientRect?.();
+    const hostScaleY = hostRect ? hostRect.height / host.offsetHeight : 0;
+    if (!hostRect || !pageRect || !Number.isFinite(hostScaleY) || hostScaleY <= 0) return;
+    const inset = host.querySelector(".paperlib-canvas-pdf-meta")?.offsetHeight || 0;
+    host.scrollTo({
+      top: host.scrollTop + (pageRect.top - hostRect.top) / hostScaleY - inset - 8,
+      behavior: smooth ? "smooth" : "auto"
+    });
+  }
+
+  commitWorkspacePdfPageInput() {
+    const input = this.pdfPageInput;
+    if (!input?.isConnected) return;
+    const count = this.pdfCache?.document?.numPages || 0;
+    const value = Number.parseInt(input.value, 10);
+    if (!Number.isFinite(value) || value < 1 || value > count || value === this.pdfCurrentPage) {
+      input.value = String(this.pdfCurrentPage || 1);
+      return;
+    }
+    this.scrollWorkspacePdfToPage(value);
   }
 
   ensureWorkspacePdfPage(pageNumber) {
@@ -709,7 +758,6 @@ class PaperResearchWorkspaceView extends ItemView {
           job.record.promise = null;
           if (job.token === this.pdfRenderToken && job.cache === this.pdfCache) {
             this.pdfActiveRenders -= 1;
-            this.updateWorkspacePdfProgress();
             this.pumpWorkspacePdfPages();
             this.scheduleWorkspacePdfVisibility();
             if (job.record.near && job.record.pageData) void this.ensureWorkspacePdfPage(job.record.pageNumber);
@@ -1206,9 +1254,29 @@ class PaperResearchWorkspaceView extends ItemView {
       this.pdfPaper = paper;
       this.pdfWorkspace = workspace;
       const count = cache.document.numPages || 0;
+      this.pdfCurrentPage = 1;
       const meta = host.createDiv({ cls: "paperlib-canvas-pdf-meta" });
       const progress = meta.createDiv({ cls: "paperlib-canvas-pdf-progress" });
-      this.pdfPageStatus = progress.createSpan({ text: `${count} 页 · 按需载入` });
+      iconButton(progress, "chevrons-up", "回到第一页", () => this.scrollWorkspacePdfToPage(1));
+      iconButton(progress, "chevron-up", "上一页", () => this.scrollWorkspacePdfToPage((this.pdfCurrentPage || 1) - 1));
+      const pageInput = progress.createEl("input", {
+        cls: "paperlib-canvas-pdf-page-input",
+        attr: { type: "text", inputmode: "numeric", "aria-label": "跳转到页码" }
+      });
+      pageInput.value = "1";
+      this.pdfPageInput = pageInput;
+      pageInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); this.commitWorkspacePdfPageInput(); }
+        else if (event.key === "Escape") {
+          pageInput.value = String(this.pdfCurrentPage || 1);
+          pageInput.blur();
+        }
+      });
+      pageInput.addEventListener("change", () => this.commitWorkspacePdfPageInput());
+      pageInput.addEventListener("blur", () => this.commitWorkspacePdfPageInput());
+      this.pdfPageTotal = progress.createSpan({ cls: "paperlib-canvas-pdf-page-total", text: `/ ${count} 页` });
+      iconButton(progress, "chevron-down", "下一页", () => this.scrollWorkspacePdfToPage((this.pdfCurrentPage || 1) + 1));
+      iconButton(progress, "chevrons-down", "跳到最后一页", () => this.scrollWorkspacePdfToPage(count));
       const figureRecognitionAvailable = this.plugin.settings.enableFigureRecognition && !mobile;
       const recognizedFigureCacheAvailable = Boolean(this.plugin.getPortablePdfFigurePayload(pdfPath));
       const figureStatus = progress.createSpan({ cls: "paperlib-pdf-figure-status",

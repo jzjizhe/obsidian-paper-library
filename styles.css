@@ -8825,6 +8825,35 @@ button.paperlib-file-open {
   gap: 8px;
 }
 
+/* 页码导航条内的图标按钮缩小一档，与 30px 高的 meta 条协调 */
+.paperlib-canvas-pdf-meta .paperlib-icon-button {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+
+.paperlib-canvas-pdf-page-input {
+  width: 38px;
+  padding: 1px 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 10px;
+  text-align: center;
+}
+
+.paperlib-canvas-pdf-page-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+  box-shadow: none;
+}
+
+.paperlib-canvas-pdf-page-total {
+  white-space: nowrap;
+}
+
 .paperlib-pdf-figure-status {
   display: inline-flex;
   max-width: 190px;
