@@ -11961,6 +11961,19 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async removeLocalPdfAnnotations(marks) {
+    // 删除时同步清理待写队列：on-leave 模式下标注可能还在队列里，
+    // 不清掉的话 flush 会把已删除的标注重新写回 PDF
+    (marks || []).forEach((mark) => {
+      if (!mark?.pdfPath) return;
+      const path = normalizePath(mark.pdfPath);
+      for (const [key, pending] of this.pendingPdfAnnotationSyncs) {
+        if (!key.startsWith(`${path}|`)) continue;
+        if (pending?.id === mark.id
+          || (mark.pdfAnnotationId && pending?.pdfAnnotationId === mark.pdfAnnotationId)) {
+          this.pendingPdfAnnotationSyncs.delete(key);
+        }
+      }
+    });
     const grouped = new Map();
     (marks || []).forEach((mark) => {
       if (!mark?.pdfPath || !mark.pdfAnnotationId) return;

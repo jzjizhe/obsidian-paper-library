@@ -1249,6 +1249,13 @@ async function run() {
       nativePlugin.settings.pdfAnnotationWriteback = "off";
       await nativePlugin.syncLocalPdfAnnotation(queuedMark);
       assert.equal(writes, 2, "off mode must never write the PDF");
+
+      // 删除标注必须同步清理待写队列，否则 flush 会把它重新写回
+      nativePlugin.settings.pdfAnnotationWriteback = "on-leave";
+      await nativePlugin.syncLocalPdfAnnotation(queuedMark);
+      assert.equal(nativePlugin.pendingPdfAnnotationSyncs.size, 1);
+      await nativePlugin.removeLocalPdfAnnotations([{ ...queuedMark }]);
+      assert.equal(nativePlugin.pendingPdfAnnotationSyncs.size, 0, "deleting must purge the pending writeback queue");
       nativePlugin.settings.pdfAnnotationWriteback = "immediate";
 
       assert.equal((await nativePlugin.getNativePdfAnnotationData(file, 1, { dataset: { annotationId: "annotation-1" } })).id, "annotation-1");
