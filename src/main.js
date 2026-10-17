@@ -7229,7 +7229,7 @@ class PaperLibraryPlugin extends Plugin {
             event.stopPropagation();
             const box = {
               x: Math.max(0, Math.min(0.94, (event.clientX - bounds.left) / bounds.width)),
-              y: Math.max(-0.5, Math.min(1.5, (event.clientY - bounds.top) / bounds.height)),
+              y: Math.max(-0.3, Math.min(1.3, (event.clientY - bounds.top) / bounds.height)),
               width: 0.32
             };
             const pageNumber = Number(targetPageEl.dataset?.pageNumber || targetPageEl.getAttribute?.("data-page-number"));
@@ -7910,46 +7910,23 @@ class PaperLibraryPlugin extends Plugin {
       && mark.box
       && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
     ));
-    const pages = [...(container.querySelectorAll(".page[data-page-number], .page") || [])];
-    if (!pages.length) return;
-    const layerParent = pages[0].offsetParent || pages[0].parentElement || container;
-    // 清理旧层（包括早期按页挂载的层），统一挂到页面容器上，允许卡片落在页间空白
-    container.querySelectorAll(".paperlib-native-pdf-textbox-layer").forEach((element) => {
-      if (element.parentElement !== layerParent) element.remove();
-    });
-    if (!boxes.length) {
-      layerParent.querySelectorAll(":scope > .paperlib-native-pdf-textbox-layer").forEach((element) => element.remove());
-      return;
-    }
-    const geometry = new Map();
-    pages.forEach((pageEl) => {
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
-      geometry.set(pageNumber, {
-        pageEl,
-        left: pageEl.offsetLeft,
-        top: pageEl.offsetTop,
-        width: pageEl.offsetWidth,
-        height: pageEl.offsetHeight
-      });
-    });
-    const signature = boxes.map((mark) => {
-      const geo = geometry.get(Number(mark.page));
-      return `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}:${geo?.width || 0}:${geo?.height || 0}:${geo?.left || 0}:${geo?.top || 0}`;
-    }).join("|");
-    let layer = layerParent.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
-    if (!force && layer?.dataset.signature === signature) return;
-    if (!layer) {
-      layer = document.createElement("div");
-      layer.className = "paperlib-native-pdf-textbox-layer";
-      layerParent.appendChild(layer);
-    }
-    layer.replaceChildren();
-    layer.dataset.signature = signature;
-    boxes.forEach((mark) => {
-      const geo = geometry.get(Number(mark.page));
-      if (!geo || !geo.width || !geo.height) return;
-      this.appendPdfTextBoxCard(layer, mark, paper, geo);
+      const pageBoxes = boxes.filter((mark) => Number(mark.page) === pageNumber);
+      const signature = pageBoxes.map((mark) => (
+        `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}`
+      )).join("|");
+      let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
+      if (!force && layer?.dataset.signature === signature) return;
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "paperlib-native-pdf-textbox-layer";
+        pageEl.appendChild(layer);
+      }
+      layer.replaceChildren();
+      layer.dataset.signature = signature;
+      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl));
     });
   }
 
@@ -7964,18 +7941,16 @@ class PaperLibraryPlugin extends Plugin {
     });
   }
 
-  appendPdfTextBoxCard(layer, mark, paper, geo) {
+  appendPdfTextBoxCard(layer, mark, paper, pageEl) {
     const box = mark.box || { x: 0.6, y: 0.3, width: 0.02 };
     const x = Math.max(0, Math.min(0.94, Number(box.x) || 0));
-    const y = Math.max(-0.5, Math.min(1.5, Number(box.y) || 0));
-    const left = geo.left + x * geo.width;
-    const top = geo.top + y * geo.height;
+    const y = Math.max(-0.3, Math.min(1.3, Number(box.y) || 0));
     const card = document.createElement("div");
     card.className = "paperlib-pdf-textbox-card";
     card.dataset.markId = mark.id;
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-    card.style.maxWidth = `${Math.max(60, (1 - x) * geo.width)}px`;
+    card.style.left = `${x * 100}%`;
+    card.style.top = `${y * 100}%`;
+    card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
     card.style.fontSize = `${this.getPdfTextBoxFontSize(mark)}px`;
     const content = document.createElement("div");
     content.className = "paperlib-pdf-textbox-content";
@@ -8019,11 +7994,13 @@ class PaperLibraryPlugin extends Plugin {
         void this.deletePdfTextBox(paper, mark);
         return;
       }
-      const width = geo.width > 0 ? Math.max(0.02, Math.min(0.9, card.offsetWidth / geo.width)) : (Number(box.width) || 0.3);
-      void this.updatePdfTextBox(paper, mark.id, {
-        comment: value,
-        box: { x, y, width }
-      });
+      const pageRect = pageEl.getBoundingClientRect?.();
+      const width = pageRect?.width > 0
+        ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
+        : (Number(box.width) || 0.3);
+      const nextX = Math.min(x, Math.max(0, 1 - width));
+      void this.updatePdfTextBox(paper, mark.id, { comment: value, box: { x: nextX, y, width } });
+      content.textContent = value;
     });
 
     let press = null;
@@ -8033,10 +8010,15 @@ class PaperLibraryPlugin extends Plugin {
       const deltaY = event.clientY - press.startY;
       if (!press.moved && Math.hypot(deltaX, deltaY) < 4) return;
       press.moved = true;
-      card.style.left = `${press.left + deltaX}px`;
-      card.style.top = `${press.top + deltaY}px`;
-      card.dataset.deltaX = String(deltaX);
-      card.dataset.deltaY = String(deltaY);
+      const pageRect = pageEl.getBoundingClientRect?.();
+      if (!pageRect?.width || !pageRect?.height) return;
+      const nextX = Math.max(0, Math.min(0.94, press.x + deltaX / pageRect.width));
+      const nextY = Math.max(-0.3, Math.min(1.3, press.y + deltaY / pageRect.height));
+      card.style.left = `${nextX * 100}%`;
+      card.style.top = `${nextY * 100}%`;
+      card.style.maxWidth = `${Math.max(0.2, 1 - nextX) * 100}%`;
+      card.dataset.dragX = String(nextX);
+      card.dataset.dragY = String(nextY);
     };
     const up = () => {
       window.removeEventListener("pointermove", move, true);
@@ -8045,11 +8027,12 @@ class PaperLibraryPlugin extends Plugin {
       press = null;
       if (!current) return;
       if (current.moved) {
-        const deltaX = Number(card.dataset.deltaX || 0);
-        const deltaY = Number(card.dataset.deltaY || 0);
-        const nextX = Math.max(0, Math.min(0.94, x + deltaX / Math.max(1, geo.width)));
-        const nextY = Math.max(-0.5, Math.min(1.5, y + deltaY / Math.max(1, geo.height)));
-        const width = geo.width > 0 ? Math.max(0.02, Math.min(0.9, card.offsetWidth / geo.width)) : (Number(box.width) || 0.3);
+        const nextX = Number(card.dataset.dragX || current.x);
+        const nextY = Number(card.dataset.dragY || current.y);
+        const pageRect = pageEl.getBoundingClientRect?.();
+        const width = pageRect?.width > 0
+          ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
+          : (Number(box.width) || 0.3);
         void this.updatePdfTextBox(paper, mark.id, { box: { x: nextX, y: nextY, width } });
         return;
       }
@@ -8060,7 +8043,7 @@ class PaperLibraryPlugin extends Plugin {
       if (card.dataset.editing === "true") return;
       event.preventDefault();
       event.stopPropagation();
-      press = { startX: event.clientX, startY: event.clientY, left, top, moved: false };
+      press = { startX: event.clientX, startY: event.clientY, x, y, moved: false };
       window.addEventListener("pointermove", move, true);
       window.addEventListener("pointerup", up, true);
     });
