@@ -9016,6 +9016,16 @@ button.paperlib-file-open {
   font-size: 11px;
 }
 
+.paperlib-annotation-kind {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .paperlib-annotation-text {
   flex: 1;
   overflow: hidden;

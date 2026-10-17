@@ -8446,6 +8446,19 @@ class PaperLibraryPlugin extends Plugin {
     return pageEl?.parentElement || null;
   }
 
+  alignNativePdfFirstPage(pageEl, scroller) {
+    const pageTop = pageEl?.getBoundingClientRect?.().top ?? 0;
+    const scrollerTop = scroller?.getBoundingClientRect?.().top ?? 0;
+    const delta = pageTop - scrollerTop;
+    if (Math.abs(delta) <= 4) return false;
+    if (scroller) {
+      scroller.scrollTop = Math.max(0, Number(scroller.scrollTop || 0) + delta);
+    } else {
+      pageEl?.scrollIntoView?.({ block: "start" });
+    }
+    return true;
+  }
+
   async pinNativePdfToFirstPage(file) {
     // Obsidian 会恢复文件上次的滚动位置，且恢复时机可能晚于 openFile（大 PDF 加载完成后才恢复）。
     // 在约 5 秒内持续检查并纠正；检测到用户交互（点击/滚轮/按键）后立即停止，避免和用户抢滚动。
@@ -8466,9 +8479,9 @@ class PaperLibraryPlugin extends Plugin {
         if (pageEl) {
           bind(pageEl.closest?.(".pdf-viewer, .pdf-container") || pageEl.parentElement);
           const scroller = this.findNativePdfScroller(pageEl);
-          const pageTop = pageEl.getBoundingClientRect?.().top ?? 0;
-          const scrollerTop = scroller?.getBoundingClientRect?.().top ?? 0;
-          if (pageTop > scrollerTop + 48) pageEl.scrollIntoView?.({ block: "start" });
+          // 第 1 页可能在视口上方（Obsidian 恢复到第 N 页），也可能在下方；
+          // 两个方向都要纠正，只向下判断会永远修不回来。
+          this.alignNativePdfFirstPage(pageEl, scroller);
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
@@ -9052,20 +9065,6 @@ class PaperLibraryPlugin extends Plugin {
       menu.showAtMouseEvent(event);
       return;
     }
-    const shape = !selectedValue && directPage && container.contains(directPage) && directFile && directPaper
-      ? this.findPdfShapeAtEvent(event, directPage, directPaper, directFile.path, directPageNumber)
-      : null;
-    if (shape) {
-      event.preventDefault();
-      event.stopPropagation();
-      const menu = new Menu();
-      menu.addItem((item) => item
-        .setTitle("删除此形状")
-        .setIcon("trash-2")
-        .onClick(() => this.removePdfShape(directPaper, shape.id)));
-      menu.showAtMouseEvent(event);
-      return;
-    }
     const selectionElement = activeSelection?.anchorNode?.nodeType === 3
       ? activeSelection.anchorNode.parentElement
       : activeSelection?.anchorNode;
@@ -9124,6 +9123,21 @@ class PaperLibraryPlugin extends Plugin {
         this.showNativePdfMarkDeleteMenu(event, directPaper, hits);
         return;
       }
+    }
+    // 文字/高亮优先；形状只在描边被点中时接管，避免大形状挡住内部内容
+    const shape = !selectedValue && directPage && container.contains(directPage) && directFile && directPaper
+      ? this.findPdfShapeAtEvent(event, directPage, directPaper, directFile.path, directPageNumber)
+      : null;
+    if (shape) {
+      event.preventDefault();
+      event.stopPropagation();
+      const menu = new Menu();
+      menu.addItem((item) => item
+        .setTitle("删除此形状")
+        .setIcon("trash-2")
+        .onClick(() => this.removePdfShape(directPaper, shape.id)));
+      menu.showAtMouseEvent(event);
+      return;
     }
     const annotationEl = event.target?.closest?.(
       ".annotationLayer [data-annotation-id], .annotationLayer section, .annotationLayer .highlightAnnotation, .annotationLayer .textAnnotation"
@@ -14186,30 +14200,41 @@ class PaperLibraryPlugin extends Plugin {
     const x2 = Math.max(0, Math.min(1, Number(end.x) || 0));
     const y2 = Math.max(0, Math.min(1, Number(end.y) || 0));
     const type = ["line", "arrow", "circle", "ellipse", "rect"].includes(shape.type) ? shape.type : "line";
-    if (type === "line" || type === "arrow") {
-      const distance = this.pdfInkPointSegmentDistance(
-        { x: point.x * rect.width, y: point.y * rect.height },
-        { x: x1 * rect.width, y: y1 * rect.height },
-        { x: x2 * rect.width, y: y2 * rect.height }
-      );
-      return distance <= Math.max(8, (Number(shape.width) || 2.5) + 4);
-    }
     const left = Math.min(x1, x2);
     const right = Math.max(x1, x2);
     const top = Math.min(y1, y2);
     const bottom = Math.max(y1, y2);
-    if (type === "rect") {
-      const padX = 6 / rect.width;
-      const padY = 6 / rect.height;
-      return point.x >= left - padX && point.x <= right + padX
-        && point.y >= top - padY && point.y <= bottom + padY;
+    const tolerance = Math.max(8, (Number(shape.width) || 2.5) + 4);
+    const px = point.x * rect.width;
+    const py = point.y * rect.height;
+    if (type === "line" || type === "arrow") {
+      const distance = this.pdfInkPointSegmentDistance(
+        { x: px, y: py },
+        { x: x1 * rect.width, y: y1 * rect.height },
+        { x: x2 * rect.width, y: y2 * rect.height }
+      );
+      return distance <= tolerance;
     }
-    const centerX = (left + right) / 2;
-    const centerY = (top + bottom) / 2;
-    const radiusX = Math.max(0.0001, (right - left) / 2);
-    const radiusY = Math.max(0.0001, (bottom - top) / 2);
-    const value = ((point.x - centerX) / radiusX) ** 2 + ((point.y - centerY) / radiusY) ** 2;
-    return value <= 1.1;
+    const leftPx = left * rect.width;
+    const rightPx = right * rect.width;
+    const topPx = top * rect.height;
+    const bottomPx = bottom * rect.height;
+    if (type === "rect") {
+      // 只命中描边，避免一个大的空心矩形挡住内部的文字和标注
+      if (px < leftPx - tolerance || px > rightPx + tolerance
+        || py < topPx - tolerance || py > bottomPx + tolerance) return false;
+      const edgeX = Math.min(Math.abs(px - leftPx), Math.abs(px - rightPx));
+      const edgeY = Math.min(Math.abs(py - topPx), Math.abs(py - bottomPx));
+      return Math.min(edgeX, edgeY) <= tolerance;
+    }
+    // 椭圆/圆：按像素空间到椭圆边界的近似距离判断
+    const centerX = (leftPx + rightPx) / 2;
+    const centerY = (topPx + bottomPx) / 2;
+    const radiusX = Math.max(0.5, (rightPx - leftPx) / 2);
+    const radiusY = Math.max(0.5, (bottomPx - topPx) / 2);
+    const radial = Math.hypot((px - centerX) / radiusX, (py - centerY) / radiusY);
+    const distance = Math.abs(radial - 1) * Math.min(radiusX, radiusY);
+    return distance <= tolerance;
   }
 
   findPdfShapeAtEvent(event, pageEl, paper, pdfPath, pageNumber) {
