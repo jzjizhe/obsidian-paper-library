@@ -8272,6 +8272,7 @@ class PaperLibraryPlugin extends Plugin {
     const forward = anchorIndex < focusIndex || (anchorIndex === focusIndex && selection.anchorOffset <= selection.focusOffset);
     const domRects = this.captureDomSelectionRects(selection.getRangeAt(0), activeLayer);
     const selectionData = await this.getNativePdfSelectionData(file, page, activeLayer, domRects);
+    if (!selectionData.pdfRects.length) throw new Error("未能识别选区，请重新选择文字");
     const fallbackRange = {
       beginIndex: forward ? anchorIndex : focusIndex,
       beginOffset: forward ? selection.anchorOffset : selection.focusOffset,
@@ -8328,6 +8329,9 @@ class PaperLibraryPlugin extends Plugin {
       const base = page.getViewport({ scale: 1 });
       const layerRect = textLayer.getBoundingClientRect();
       const viewport = page.getViewport({ scale: layerRect.width / Math.max(1, base.width) });
+      const maxRectHeight = base.height * 0.15;
+      const marginX = base.width * 0.02;
+      const marginY = base.height * 0.02;
       const pdfRects = rects.map((rect) => {
         const topLeft = viewport.convertToPdfPoint(rect.left, rect.top);
         const topRight = viewport.convertToPdfPoint(rect.right, rect.top);
@@ -8342,6 +8346,17 @@ class PaperLibraryPlugin extends Plugin {
             Math.max(topLeft[1], topRight[1], bottomLeft[1], bottomRight[1])
           ]
         };
+      }).filter((item) => {
+        const [x1, y1, x2, y2] = item.rect;
+        if (![x1, y1, x2, y2].every(Number.isFinite)) return false;
+        const width = x2 - x1;
+        const height = y2 - y1;
+        // 单条选区矩形不可能很高：整页高亮通常来自跨页/缩放异常产生的离群矩形
+        if (width <= 0.5 || height <= 0.5 || height > maxRectHeight) return false;
+        if (width > base.width * 1.05) return false;
+        if (x1 < -marginX || x2 > base.width + marginX) return false;
+        if (y1 < -marginY || y2 > base.height + marginY) return false;
+        return true;
       });
       return { pdfRects, textItems: textContent.items || [] };
     } finally {
