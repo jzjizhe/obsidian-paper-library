@@ -1239,7 +1239,7 @@ async function run() {
       // on-leave 模式：标注先入待写队列（避免原生视图重载闪烁），flush 时才写回 PDF
       nativePlugin.settings.pdfAnnotationWriteback = "on-leave";
       nativePlugin.pendingPdfAnnotationSyncs = new Map();
-      const queuedMark = { pdfPath: file.path, pdfAnnotationId: "queued-test", id: "queued-test", page: 1, pdfRects: mark.pdfRects, color: "yellow", pdfSubtype: "Highlight", text: "Selected text" };
+      const queuedMark = { ...mark, color: "yellow" };
       await nativePlugin.syncLocalPdfAnnotation(queuedMark);
       assert.equal(writes, 1, "on-leave mode must not write the PDF immediately");
       assert.equal(nativePlugin.pendingPdfAnnotationSyncs.size, 1);

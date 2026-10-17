@@ -423,6 +423,40 @@ class PaperLibraryPlugin extends Plugin {
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
     this.addCommand({
+      id: "rewrite-pdf-annotations",
+      name: "重写 PDF 内嵌批注（去除外观流）",
+      callback: async () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const file = leaf?.view?.file;
+        const paper = file ? this.getPaperForPdfFile(file) : null;
+        if (!file || !paper) {
+          new Notice("请先打开一篇已加入论文库的 PDF");
+          return;
+        }
+        const path = normalizePath(file.path);
+        const marks = (this.ensureResearchWorkspace(paper).highlights || []).filter((mark) => (
+          normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+            && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+        ));
+        let written = 0;
+        for (const mark of marks) {
+          try {
+            if (await this.upsertLocalPdfAnnotation(mark)) written += 1;
+          } catch (error) {
+            console.error("Paper Library: failed to rewrite PDF annotation", error);
+          }
+        }
+        try {
+          await this.pruneLocalPdfAnnotations(path);
+        } catch (error) {
+          console.error("Paper Library: failed to prune PDF annotations", error);
+        }
+        new Notice(`已重写 ${written} 条批注（去除外观流），并清理孤儿注释`);
+      }
+    });
+    this.addCommand({
       id: "debug-toggle-embedded-highlights",
       name: "调试：显示/隐藏所有内嵌高亮注释",
       callback: () => {
@@ -12162,31 +12196,9 @@ class PaperLibraryPlugin extends Plugin {
         P: page.ref
       };
       if (subtype === "Highlight") {
+        // 不生成外观流（AP）：pdf.js 会把带 AP 的高亮渲染进页面画布（hasOwnCanvas），
+        // 与插件覆盖层叠加导致变深且无法用 DOM 隐藏。QuadPoints + C + CA 足以让各阅读器渲染高亮。
         values.QuadPoints = mark.pdfRects.flatMap((item) => item.quad || []);
-        const commands = mark.pdfRects.map((item) => {
-          const area = item.rect;
-          const x = Math.max(0, area[0] - rect[0]);
-          const y = Math.max(0, area[1] - rect[1]);
-          const width = Math.max(0.1, area[2] - area[0]);
-          const height = Math.max(0.1, area[3] - area[1]);
-          return `${x} ${y} ${width} ${height} re f`;
-        }).join("\n");
-        const appearanceDictionary = document.context.obj({
-          Type: "XObject",
-          Subtype: "Form",
-          FormType: 1,
-          BBox: [0, 0, Math.max(0.1, rect[2] - rect[0]), Math.max(0.1, rect[3] - rect[1])],
-          Resources: {
-            ExtGState: {
-              GS0: { Type: "ExtGState", ca: 0.38, CA: 0.38, BM: "Multiply" }
-            }
-          }
-        });
-        const appearance = PDFRawStream.of(
-          appearanceDictionary,
-          new TextEncoder().encode(`q\n/GS0 gs\n${color.join(" ")} rg\n${commands}\nQ`)
-        );
-        values.AP = { N: document.context.register(appearance) };
       }
       else values.Name = "Comment";
       const annotation = document.context.obj(values);
@@ -12277,7 +12289,51 @@ class PaperLibraryPlugin extends Plugin {
         new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
       }
     }
+    const paths = new Set(entries.map(([, mark]) => normalizePath(mark.pdfPath || "")).filter(Boolean));
+    for (const path of paths) {
+      try {
+        await this.pruneLocalPdfAnnotations(path);
+      } catch (error) {
+        console.error("Paper Library: failed to prune stale PDF annotations", error);
+      }
+    }
     if (notify) new Notice(written ? `已写回 ${written} 条批注到 PDF 文件` : "没有待写回的 PDF 批注");
+  }
+
+  async pruneLocalPdfAnnotations(pdfPath) {
+    // 删除 PDF 中属于本插件但已不在论文库里的注释（例如旧版本删除遗留的孤儿注释）
+    const path = normalizePath(pdfPath || "");
+    if (!path) return false;
+    const paper = this.settings.papers?.find((item) => normalizePath(item.pdfPath || "") === path);
+    const valid = new Set();
+    if (paper) {
+      for (const mark of this.ensureResearchWorkspace(paper).highlights || []) {
+        if (normalizePath(mark.pdfPath || paper.pdfPath || "") !== path) continue;
+        valid.add(`paperlib:${mark.pdfAnnotationId || mark.id}`);
+      }
+      // paper.annotations（长按拖出摘录的标注）同样会写回 PDF，不能当作孤儿删除
+      for (const mark of paper.annotations || []) {
+        if (normalizePath(mark.pdfPath || paper.pdfPath || "") !== path) continue;
+        valid.add(`paperlib:${mark.pdfAnnotationId || mark.id}`);
+      }
+    }
+    return this.mutateLocalPdf(path, async (document) => {
+      let changed = false;
+      document.getPages().forEach((page) => {
+        const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+        if (!annots) return;
+        for (let index = annots.size() - 1; index >= 0; index -= 1) {
+          const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
+          if (!dictionary) continue;
+          const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
+          const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+          if (!value.startsWith("paperlib:") || valid.has(value)) continue;
+          annots.remove(index);
+          changed = true;
+        }
+      });
+      return changed;
+    });
   }
 
   async savePdfHighlight(context, colorName, comment = "", options = {}) {
