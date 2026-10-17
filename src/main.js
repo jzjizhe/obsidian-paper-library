@@ -342,6 +342,7 @@ class PaperLibraryPlugin extends Plugin {
     this.nativePdfPageSizeCache = new Map();
     this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
     this.nativeOverlayHidden = false;
+    this.nativeEmbeddedHidden = false;
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
@@ -422,6 +423,27 @@ class PaperLibraryPlugin extends Plugin {
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
     this.addCommand({
+      id: "debug-toggle-embedded-highlights",
+      name: "调试：显示/隐藏所有内嵌高亮注释",
+      callback: () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const container = leaf?.view?.containerEl;
+        if (!container) {
+          new Notice("请先打开一个 PDF");
+          return;
+        }
+        this.nativeEmbeddedHidden = !this.nativeEmbeddedHidden;
+        container.querySelectorAll(".highlightAnnotation").forEach((element) => {
+          element.style.display = this.nativeEmbeddedHidden ? "none" : "";
+        });
+        new Notice(this.nativeEmbeddedHidden
+          ? `已隐藏 ${container.querySelectorAll(".highlightAnnotation").length} 个内嵌高亮注释元素`
+          : "已恢复内嵌高亮注释显示");
+      }
+    });
+    this.addCommand({
       id: "debug-toggle-pdf-highlight-overlay",
       name: "调试：显示/隐藏高亮覆盖层",
       callback: () => {
@@ -464,6 +486,13 @@ class PaperLibraryPlugin extends Plugin {
           annotationLikeElements: [...container.querySelectorAll("[class*='annot' i], [data-annotation-id]")]
             .slice(0, 20)
             .map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}#${el.getAttribute?.("data-annotation-id") || ""}`),
+          highlightAnnotationCount: container.querySelectorAll(".highlightAnnotation").length,
+          annotationLayers: [...container.querySelectorAll(".annotationLayer")].map((layer) => ({
+            parentClass: String(layer.parentElement?.className || ""),
+            pageNumber: layer.closest(".page")?.dataset?.pageNumber || layer.parentElement?.dataset?.pageNumber || "",
+            sectionCount: layer.querySelectorAll("section").length,
+            highlightIds: [...layer.querySelectorAll(".highlightAnnotation")].map((el) => el.getAttribute("data-annotation-id"))
+          })),
           pages: []
         };
         let ownIds = new Map();
@@ -473,6 +502,19 @@ class PaperLibraryPlugin extends Plugin {
           diagnostics.ownIdsError = String(error?.message || error);
         }
         diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        {
+          const allOwn = new Set();
+          for (const ids of ownIds.values()) for (const id of ids) allOwn.add(String(id));
+          diagnostics.ownDomHits = [...container.querySelectorAll("[data-annotation-id]")]
+            .map((el) => ({
+              id: el.getAttribute("data-annotation-id"),
+              className: String(el.className?.baseVal ?? el.className),
+              display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
+              rect: (() => { const r = el.getBoundingClientRect?.(); return r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null; })()
+            }))
+            .filter((item) => allOwn.has(item.id));
+          diagnostics.ownIdsMissingDom = [...allOwn].filter((id) => !diagnostics.ownDomHits.some((hit) => hit.id === id));
+        }
         try {
           const buffer = await this.readPdfBinary(file);
           const pdfjs = await loadPdfJs();
