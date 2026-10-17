@@ -760,6 +760,17 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
+      .setName("PDF 文本框字号")
+      .setDesc("插入文本框时的默认字号；可对单个文本框右键增减字号（8-24）。")
+      .addSlider((slider) => slider
+        .setLimits(8, 24, 1)
+        .setValue(Number(this.plugin.settings.pdfTextBoxFontSize) || 11)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.pdfTextBoxFontSize = value;
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
       .setName("研究画布笔记标题")
       .setDesc("摘录卡片、想法与连接自动同步到论文笔记中的此标题下。")
       .addText((text) => text

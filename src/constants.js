@@ -95,6 +95,7 @@ const DEFAULT_SETTINGS = {
   pdfAnnotationWriteback: "on-leave",
   pdfOpenMode: "native",
   pdfOpenPosition: "last",
+  pdfTextBoxFontSize: 11,
   researchWorkspaceHeading: "Research Workspace",
   defaultHighlightColor: "yellow",
   tableColumnWidths: Object.fromEntries(Object.entries(PAPER_TABLE_COLUMNS).map(([key, value]) => [key, value.width])),

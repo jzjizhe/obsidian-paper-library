@@ -7844,6 +7844,7 @@ class PaperLibraryPlugin extends Plugin {
     card.style.left = `${x * 100}%`;
     card.style.top = `${y * 100}%`;
     card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
+    card.style.fontSize = `${this.getPdfTextBoxFontSize(mark)}px`;
     const content = document.createElement("div");
     content.className = "paperlib-pdf-textbox-content";
     content.setAttribute("contenteditable", "false");
@@ -7942,13 +7943,49 @@ class PaperLibraryPlugin extends Plugin {
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      new Menu().addItem((item) => item
+      const menu = new Menu();
+      menu.addItem((item) => item
+        .setTitle("增大字号")
+        .setIcon("plus")
+        .onClick(() => { void this.changePdfTextBoxFontSize(paper, mark, 2); }));
+      menu.addItem((item) => item
+        .setTitle("减小字号")
+        .setIcon("minus")
+        .onClick(() => { void this.changePdfTextBoxFontSize(paper, mark, -2); }));
+      menu.addSeparator();
+      menu.addItem((item) => item
         .setTitle("删除文本框")
         .setIcon("trash-2")
-        .onClick(() => { void this.deletePdfTextBox(paper, mark); }))
-        .showAtMouseEvent(event);
+        .onClick(() => { void this.deletePdfTextBox(paper, mark); }));
+      menu.showAtMouseEvent(event);
     });
     layer.appendChild(card);
+  }
+
+  getPdfTextBoxFontSize(mark) {
+    const value = Number(mark?.fontSize) || Number(this.settings.pdfTextBoxFontSize) || 11;
+    return Math.max(8, Math.min(24, value));
+  }
+
+  async changePdfTextBoxFontSize(paper, mark, delta) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return;
+    const current = this.getPdfTextBoxFontSize(mark);
+    const next = Math.max(8, Math.min(24, current + delta));
+    if (next === current) return;
+    await this.updatePdfTextBox(paper, mark.id, { fontSize: next });
+    // 字号变化后重新测量宽度，保证写回 PDF 的矩形与显示一致
+    const file = this.app.vault.getAbstractFileByPath(normalizePath(mark.pdfPath || paper.pdfPath || ""));
+    const leaf = this.app.workspace.getLeavesOfType?.("pdf")?.find((item) => item.view?.file?.path === file?.path);
+    const pageEl = leaf?.view?.containerEl?.querySelector?.(`.page[data-page-number="${mark.page}"]`);
+    const card = leaf?.view?.containerEl?.querySelector?.(`.paperlib-pdf-textbox-card[data-mark-id="${mark.id}"]`);
+    if (pageEl?.getBoundingClientRect && card?.offsetWidth) {
+      const pageRect = pageEl.getBoundingClientRect();
+      if (pageRect.width > 0) {
+        const width = Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width));
+        await this.updatePdfTextBox(paper, mark.id, { box: { ...(mark.box || {}), width } });
+      }
+    }
   }
 
   async createPdfTextBox(paper, file, pageNumber, box) {
@@ -7964,6 +8001,7 @@ class PaperLibraryPlugin extends Plugin {
       selection: { beginIndex: -1, beginOffset: -1, endIndex: -1, endOffset: -1 },
       selectionSource: "textbox",
       rectCoordinateSpace: "page-relative",
+      fontSize: Number(this.settings.pdfTextBoxFontSize) || 11,
       color: "yellow",
       pdfSubtype: "FreeText",
       box: { x: box.x, y: box.y, width: box.width || 0.02 },
@@ -7997,6 +8035,9 @@ class PaperLibraryPlugin extends Plugin {
     if (!mark) return false;
     if (typeof changes.comment === "string") mark.comment = changes.comment;
     if (changes.box) mark.box = { ...(mark.box || {}), ...changes.box };
+    if (Number.isFinite(Number(changes.fontSize))) {
+      mark.fontSize = Math.max(8, Math.min(24, Number(changes.fontSize)));
+    }
     mark.updatedAt = new Date().toISOString();
     await this.saveSettings();
     await this.syncLocalPdfAnnotation(mark);
@@ -13002,8 +13043,9 @@ class PaperLibraryPlugin extends Plugin {
         const x = Math.max(0, Math.min(size.width - width, (Number(box.x) || 0.6) * size.width));
         const yTop = (1 - Math.max(0, Math.min(1, Number(box.y) || 0.3))) * size.height;
         const contentText = String(mark.comment || mark.text || "");
-        const lines = Math.max(1, Math.ceil(contentText.length / Math.max(8, Math.floor(width / 5))));
-        const height = Math.max(20, lines * 12 + 8);
+        const fontSize = this.getPdfTextBoxFontSize(mark);
+        const lines = Math.max(1, Math.ceil(contentText.length / Math.max(8, Math.floor(width / (fontSize * 0.5)))));
+        const height = Math.max(fontSize + 8, lines * (fontSize + 2) + 8);
         rect = [x, Math.max(0, yTop - height), Math.min(size.width, x + width), yTop];
       } else {
         const allRects = (mark.pdfRects || []).map((item) => item.rect).filter((item) => item?.length === 4);
@@ -13028,7 +13070,7 @@ class PaperLibraryPlugin extends Plugin {
         P: page.ref
       };
       if (subtype === "FreeText") {
-        values.DA = PDFString.of("/Helvetica 10 Tf 0 g");
+        values.DA = PDFString.of(`/Helvetica ${this.getPdfTextBoxFontSize(mark)} Tf 0 g`);
         values.Border = [0, 0, 1];
       }
       if (subtype === "Highlight") {
