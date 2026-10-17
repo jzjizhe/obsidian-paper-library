@@ -575,6 +575,28 @@ class PaperLibraryPlugin extends Plugin {
       }
     });
     this.addCommand({
+      id: "debug-insert-textbox",
+      name: "调试：在当前 PDF 插入测试文本框",
+      callback: async () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const file = leaf?.view?.file;
+        const paper = file ? this.getPaperForPdfFile(file) : null;
+        if (!file || !paper) {
+          new Notice("没有可用的 PDF（或未加入论文库）");
+          return;
+        }
+        try {
+          const mark = await this.createPdfTextBox(paper, file, 1, { x: 0.5, y: 0.2, width: 0.02 }, 18, "default");
+          new Notice(mark ? `已插入测试文本框：${mark.id}` : "插入返回空（参数校验未通过）");
+        } catch (error) {
+          console.error("Paper Library: debug textbox insert failed", error);
+          new Notice(`插入失败：${error.message || error}`);
+        }
+      }
+    });
+    this.addCommand({
       id: "debug-native-pdf-annotations",
       name: "调试：输出 PDF 注释层结构",
       callback: async () => {
