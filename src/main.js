@@ -6906,7 +6906,7 @@ class PaperLibraryPlugin extends Plugin {
         this.renderNativePdfShapeOverlays(leaf, container);
         void this.renderNativePdfHighlightOverlays(leaf, container);
         void this.renderNativePdfNoteOverlays(leaf, container);
-        this.renderNativePdfTextBoxes(leaf, container);
+        void this.renderNativePdfTextBoxes(leaf, container).catch((error) => console.error("Paper Library: failed to render text boxes", error));
         this.ensureNativePdfFigureDragZones(leaf, container, existingState);
         return;
       }
@@ -7238,7 +7238,7 @@ class PaperLibraryPlugin extends Plugin {
       this.renderNativePdfShapeOverlays(leaf, container, true);
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
       void this.renderNativePdfNoteOverlays(leaf, container, true);
-      this.renderNativePdfTextBoxes(leaf, container, true);
+      void this.renderNativePdfTextBoxes(leaf, container, true).catch((error) => console.error("Paper Library: failed to render text boxes", error));
       this.ensureNativePdfFigureDragZones(leaf, container, state);
       if (!this.nativePdfBindings.has(container)) {
         const pointerDown = (event) => {
@@ -8105,7 +8105,7 @@ class PaperLibraryPlugin extends Plugin {
     return best && best.distance <= 320 ? best : null;
   }
 
-  renderNativePdfTextBoxes(leaf, container, force = false) {
+  async renderNativePdfTextBoxes(leaf, container, force = false) {
     const file = leaf?.view?.file || this.app.workspace.getActiveFile();
     const paper = this.getPaperForPdfFile(file);
     if (!file?.path || !paper) {
@@ -8113,6 +8113,8 @@ class PaperLibraryPlugin extends Plugin {
       return;
     }
     const path = normalizePath(file.path);
+    const sizes = await this.getNativePdfPageSizes(file).catch(() => null);
+    if (!container?.isConnected) return;
     const boxes = (paper.annotations || []).filter((mark) => (
       mark.pdfSubtype === "FreeText"
       && mark.box
@@ -8121,8 +8123,11 @@ class PaperLibraryPlugin extends Plugin {
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
+      const dims = sizes?.get?.(pageNumber);
+      const pageRect = pageEl.getBoundingClientRect?.();
+      const scale = dims?.width && pageRect?.width ? pageRect.width / dims.width : 1;
       const pageBoxes = boxes.filter((mark) => Number(mark.page) === pageNumber);
-      const signature = pageBoxes.map((mark) => (
+      const signature = `${Math.round(pageRect?.width || 0)}|` + pageBoxes.map((mark) => (
         `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}`
       )).join("|");
       let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
@@ -8134,7 +8139,7 @@ class PaperLibraryPlugin extends Plugin {
       }
       layer.replaceChildren();
       layer.dataset.signature = signature;
-      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl));
+      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl, scale));
     });
     // pdf.js 的注释层可能在页面渲染后才创建，写回后的 FreeText 会和覆盖卡片叠成两份；
     // 这里晚一点再隐藏一次，覆盖异步创建的注释节点。
@@ -8155,11 +8160,11 @@ class PaperLibraryPlugin extends Plugin {
       const file = leaf.view?.file;
       const container = leaf.view?.containerEl;
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
-      this.renderNativePdfTextBoxes(leaf, container, true);
+      void this.renderNativePdfTextBoxes(leaf, container, true).catch((error) => console.error("Paper Library: failed to render text boxes", error));
     });
   }
 
-  appendPdfTextBoxCard(layer, mark, paper, pageEl) {
+  appendPdfTextBoxCard(layer, mark, paper, pageEl, scale = 1) {
     const box = mark.box || { x: 0.6, y: 0.3, width: 0.02 };
     const x = Math.max(0, Math.min(0.94, Number(box.x) || 0));
     const y = Math.max(-0.3, Math.min(1.3, Number(box.y) || 0));
@@ -8169,7 +8174,7 @@ class PaperLibraryPlugin extends Plugin {
     card.style.left = `${x * 100}%`;
     card.style.top = `${y * 100}%`;
     card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
-    card.style.fontSize = `${this.getPdfTextBoxFontSize(mark)}px`;
+    card.style.fontSize = `${this.getPdfTextBoxFontSize(mark) * Math.max(0.2, Number(scale) || 1)}px`;
     const content = document.createElement("div");
     content.className = "paperlib-pdf-textbox-content";
     content.style.color = this.getPdfTextBoxTextColorValue(mark);
