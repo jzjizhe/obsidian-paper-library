@@ -337,6 +337,8 @@ class PaperLibraryPlugin extends Plugin {
     this.conferenceRankingDatabaseLastAttemptAt = 0;
     this.conferenceRankingLookup = null;
     this.pdfMutationQueues = new Map();
+    this.pendingPdfAnnotationSyncs = new Map();
+    this.nativePdfPageSizeCache = new Map();
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -413,6 +415,12 @@ class PaperLibraryPlugin extends Plugin {
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
     this.addCommand({ id: "organize-paper-files", name: "Organize paper PDFs and notes", callback: () => this.organizeLibraryFiles(true) });
+    this.addCommand({
+      id: "flush-pdf-annotation-writeback",
+      name: "立即把论文批注写回 PDF 文件",
+      hotkeys: [{ modifiers: ["Mod"], key: "s" }],
+      callback: () => { void this.flushPdfAnnotationSyncs(null, true); }
+    });
     this.addCommand({ id: "import-active-note", name: "Import current note as paper", callback: () => this.importActiveNote() });
     this.addCommand({ id: "open-paper-composer", name: "Open full Paper Composer in right sidebar", callback: () => this.openSmartComposer() });
     this.addCommand({ id: "open-paper-composer-settings", name: "Open Paper Composer model and account settings", callback: () => this.openSmartComposerSettings() });
@@ -512,6 +520,7 @@ class PaperLibraryPlugin extends Plugin {
 
   onunload() {
     this.stopExtensionServer();
+    void this.flushPdfAnnotationSyncs();
     this.composerMountObserver?.disconnect?.();
     this.composerMountObserver = null;
     document.body?.removeClass?.("paperlib-paperglass-active");
@@ -5893,6 +5902,7 @@ class PaperLibraryPlugin extends Plugin {
       if (typeof leaf.view?.refreshPdfHighlights === "function") leaf.view.refreshPdfHighlights(paper);
     });
     this.refreshNativePdfInkOverlays(paper);
+    this.refreshNativePdfHighlightOverlays(paper);
   }
 
   getDesktopPluginPath(relativePath = "") {
@@ -6497,6 +6507,11 @@ class PaperLibraryPlugin extends Plugin {
     if (this.app.workspace?.on && this.registerEvent) {
       this.registerEvent(this.app.workspace.on("layout-change", mount));
       this.registerEvent(this.app.workspace.on("active-leaf-change", mount));
+      // 离开某个 PDF 视图时，把它积累的待写回批注批量写入（重载发生在看不见的时候）
+      this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+        const activePath = normalizePath(this.app.workspace.getActiveFile?.()?.path || "");
+        void this.flushPdfAnnotationSyncs((mark) => normalizePath(mark.pdfPath || "") !== activePath);
+      }));
     }
     this.nativePdfToolbarObserver = new MutationObserver(mount);
     this.nativePdfToolbarObserver.observe(document.body, { childList: true, subtree: true });
@@ -6532,6 +6547,7 @@ class PaperLibraryPlugin extends Plugin {
         });
         this.updateNativePdfToolbarState(container, existingGroup, existingState);
         this.renderNativePdfInkOverlays(leaf, container);
+        void this.renderNativePdfHighlightOverlays(leaf, container);
         this.ensureNativePdfFigureDragZones(leaf, container, existingState);
         return;
       }
@@ -6658,6 +6674,7 @@ class PaperLibraryPlugin extends Plugin {
       container.appendChild(group);
       this.updateNativePdfToolbarState(container, group, state);
       this.renderNativePdfInkOverlays(leaf, container, true);
+      void this.renderNativePdfHighlightOverlays(leaf, container, true);
       this.ensureNativePdfFigureDragZones(leaf, container, state);
       if (!this.nativePdfBindings.has(container)) {
         const pointerDown = (event) => {
@@ -6976,6 +6993,100 @@ class PaperLibraryPlugin extends Plugin {
       const container = leaf.view?.containerEl;
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
       this.renderNativePdfInkOverlays(leaf, container, true);
+    });
+  }
+
+  getNativePdfPageSizes(file) {
+    // 每个 PDF 的页面尺寸（PDF 点）只读一次并缓存，供原生视图高亮覆盖层换算坐标
+    const path = normalizePath(file?.path || "");
+    if (!path) return Promise.resolve(null);
+    const cached = this.nativePdfPageSizeCache.get(path);
+    if (cached) return cached;
+    const promise = (async () => {
+      const buffer = await this.readPdfBinary(file);
+      const pdfjs = await loadPdfJs();
+      const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+      try {
+        const sizes = new Map();
+        for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
+          const page = await document.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1 });
+          sizes.set(pageNumber, { width: viewport.width, height: viewport.height });
+        }
+        return sizes;
+      } finally {
+        await document.destroy?.();
+      }
+    })();
+    this.nativePdfPageSizeCache.set(path, promise);
+    promise.catch(() => this.nativePdfPageSizeCache.delete(path));
+    return promise;
+  }
+
+  ensureNativePdfHighlightLayer(pageEl) {
+    let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
+    if (layer) return layer;
+    layer = document.createElement("div");
+    layer.className = "paperlib-native-pdf-highlight-layer";
+    layer.setAttribute("aria-hidden", "true");
+    pageEl.appendChild(layer);
+    return layer;
+  }
+
+  async renderNativePdfHighlightOverlays(leaf, container, force = false) {
+    const file = leaf?.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    if (!file?.path || !paper) {
+      container?.querySelectorAll?.(".paperlib-native-pdf-highlight-layer")?.forEach?.((element) => element.remove());
+      return;
+    }
+    const path = normalizePath(file.path);
+    const workspace = this.ensureResearchWorkspace(paper);
+    const sizes = await this.getNativePdfPageSizes(file);
+    if (!sizes || !container.isConnected) return;
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+      const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+      const dims = sizes.get(pageNumber);
+      if (!pageNumber || !dims?.width || !dims?.height) return;
+      const marks = (workspace.highlights || []).filter((mark) => (
+        normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+          && Number(mark.page) === pageNumber
+          && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+      ));
+      const signature = marks.map((mark) => `${mark.id}:${mark.color}`).join("|");
+      const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
+      if (!force && existing?.dataset.signature === signature) return;
+      const layer = existing || this.ensureNativePdfHighlightLayer(pageEl);
+      layer.replaceChildren();
+      layer.dataset.signature = signature;
+      marks.forEach((mark) => {
+        const color = CANVAS_HIGHLIGHT_COLORS.find((item) => (
+          item.id === String(mark.color || "").toLocaleLowerCase()
+        )) || CANVAS_HIGHLIGHT_COLORS[0];
+        mark.pdfRects.forEach((item) => {
+          const rect = item?.rect;
+          if (!Array.isArray(rect) || rect.length !== 4) return;
+          const element = document.createElement("div");
+          element.className = "paperlib-native-pdf-highlight-rect";
+          element.style.left = `${Math.min(rect[0], rect[2]) / dims.width * 100}%`;
+          element.style.top = `${(1 - Math.max(rect[1], rect[3]) / dims.height) * 100}%`;
+          element.style.width = `${Math.abs(rect[2] - rect[0]) / dims.width * 100}%`;
+          element.style.height = `${Math.abs(rect[3] - rect[1]) / dims.height * 100}%`;
+          element.style.background = color.value;
+          layer.appendChild(element);
+        });
+      });
+    });
+  }
+
+  refreshNativePdfHighlightOverlays(paper) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !this.app.workspace?.getLeavesOfType) return;
+    this.app.workspace.getLeavesOfType("pdf").forEach((leaf) => {
+      const file = leaf.view?.file;
+      const container = leaf.view?.containerEl;
+      if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
+      void this.renderNativePdfHighlightOverlays(leaf, container, true);
     });
   }
 
@@ -11553,6 +11664,19 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async syncLocalPdfAnnotation(mark) {
+    const mode = ["on-leave", "immediate", "off"].includes(this.settings.pdfAnnotationWriteback)
+      ? this.settings.pdfAnnotationWriteback
+      : "on-leave";
+    if (mode === "off") return true;
+    // on-leave：写回 PDF 会让 Obsidian 原生视图重载（闪烁），所以先排队，
+    // 等离开该 PDF 视图 / 插件卸载 / 手动命令时再批量写入。
+    // 批注本体已即时持久化到论文库与笔记，这里只影响外部阅读器可见的副本。
+    if (mode === "on-leave") {
+      if (mark?.pdfPath && (mark.pdfAnnotationId || mark.id)) {
+        this.pendingPdfAnnotationSyncs.set(`${mark.pdfPath}|${mark.pdfAnnotationId || mark.id}`, mark);
+      }
+      return true;
+    }
     try {
       return await this.upsertLocalPdfAnnotation(mark);
     } catch (error) {
@@ -11560,6 +11684,26 @@ class PaperLibraryPlugin extends Plugin {
       new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
       return false;
     }
+  }
+
+  async flushPdfAnnotationSyncs(filter = null, notify = false) {
+    const entries = [...this.pendingPdfAnnotationSyncs.entries()]
+      .filter(([, mark]) => !filter || filter(mark));
+    if (!entries.length) {
+      if (notify) new Notice("没有待写回的 PDF 批注");
+      return;
+    }
+    entries.forEach(([key]) => this.pendingPdfAnnotationSyncs.delete(key));
+    let written = 0;
+    for (const [, mark] of entries) {
+      try {
+        if (await this.upsertLocalPdfAnnotation(mark)) written += 1;
+      } catch (error) {
+        console.error("Paper Library: failed to write local PDF annotation", error);
+        new Notice(`批注已保存到论文笔记，但写入 PDF 失败：${error.message || error}`);
+      }
+    }
+    if (notify) new Notice(written ? `已写回 ${written} 条批注到 PDF 文件` : "没有待写回的 PDF 批注");
   }
 
   async savePdfHighlight(context, colorName, comment = "", options = {}) {

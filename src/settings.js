@@ -726,6 +726,18 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
+      .setName("批注写回 PDF 文件")
+      .setDesc("写回后批注在外部 PDF 阅读器中可见。即时写回会让正在阅读的原生 PDF 视图重载（闪烁一下）；离开视图时写回则完全无感，也可随时用命令/Cmd+S 手动写回。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("on-leave", "离开视图时写回（推荐）")
+        .addOption("immediate", "即时写回")
+        .addOption("off", "不写回（仅保存在论文库内）")
+        .setValue(this.plugin.settings.pdfAnnotationWriteback || "on-leave")
+        .onChange(async (value) => {
+          this.plugin.settings.pdfAnnotationWriteback = value;
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
       .setName("研究画布笔记标题")
       .setDesc("摘录卡片、想法与连接自动同步到论文笔记中的此标题下。")
       .addText((text) => text

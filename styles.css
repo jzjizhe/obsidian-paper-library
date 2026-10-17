@@ -8921,6 +8921,26 @@ button.paperlib-file-open {
   pointer-events: none;
 }
 
+/* 原生 PDF 视图的高亮覆盖层：库数据驱动，保存即显示，不等文件写回 */
+.paperlib-native-pdf-highlight-layer {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.paperlib-native-pdf-highlight-rect {
+  position: absolute;
+  border-radius: 1.5px;
+  mix-blend-mode: multiply;
+  opacity: .42;
+}
+
+/* 覆盖层负责显示，隐藏注释层里我们写入的内嵌高亮，避免双份叠加变深 */
+.paperlib-native-pdf-host .annotationLayer [data-annotation-id^="paperlib:"] {
+  display: none;
+}
+
 .paperlib-pdf-ink-path {
   opacity: .92;
   filter: drop-shadow(0 1px 1px rgb(0 0 0 / 10%));
