@@ -14670,6 +14670,27 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-widths {
   display: none;
+  justify-content: center;
+  min-height: 120px;
+}
+
+/* 选择器要压过 Obsidian 自带的 input[type='range'] 宽度/高度规则 */
+.paperlib-native-pdf-widths .paperlib-native-pdf-width-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 18px;
+  height: 120px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--interactive-accent);
+  cursor: pointer;
+}
+
+.paperlib-native-pdf-width-value {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
 }
 
 .paperlib-native-pdf-shapes {

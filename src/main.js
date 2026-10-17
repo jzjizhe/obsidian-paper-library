@@ -6986,25 +6986,30 @@ class PaperLibraryPlugin extends Plugin {
       });
       const widths = document.createElement("div");
       widths.className = "paperlib-native-pdf-widths";
-      [1.5, 2.5, 4, 6, 8].forEach((width) => {
-        const button = document.createElement("button");
-        button.className = "paperlib-native-pdf-width";
-        button.dataset.width = String(width);
-        button.title = width <= 1.5 ? "极细" : width <= 2.5 ? "细" : width <= 4 ? "中" : width <= 6 ? "粗" : "极粗";
-        button.setAttribute("aria-label", `画笔粗细：${button.title}`);
-        const dot = document.createElement("span");
-        dot.style.width = `${width + 2}px`;
-        dot.style.height = `${width + 2}px`;
-        button.appendChild(dot);
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (state.mode === "shape") state.shapeWidth = width;
-          else state.inkWidth = width;
-          this.updateNativePdfToolbarState(container, group, state);
-        });
-        widths.appendChild(button);
-      });
+      const widthSlider = document.createElement("input");
+      widthSlider.type = "range";
+      widthSlider.className = "paperlib-native-pdf-width-slider";
+      widthSlider.min = "1.5";
+      widthSlider.max = "8";
+      widthSlider.step = "0.5";
+      widthSlider.title = "粗细";
+      widthSlider.setAttribute("aria-label", "线条粗细");
+      widthSlider.value = String(Number(state.mode === "shape" ? state.shapeWidth : state.inkWidth) || 4);
+      const widthValue = document.createElement("span");
+      widthValue.className = "paperlib-native-pdf-width-value";
+      const formatWidth = (value) => String(Math.round((Number(value) || 4) * 10) / 10);
+      widthValue.textContent = formatWidth(widthSlider.value);
+      const applyWidth = () => {
+        const value = Math.max(1.5, Math.min(8, Number(widthSlider.value) || 4));
+        if (state.mode === "shape") state.shapeWidth = value;
+        else state.inkWidth = value;
+        widthValue.textContent = formatWidth(value);
+        this.updateNativePdfToolbarState(container, group, state);
+      };
+      widthSlider.addEventListener("input", applyWidth);
+      widthSlider.addEventListener("change", applyWidth);
+      widths.appendChild(widthSlider);
+      widths.appendChild(widthValue);
       palette.appendChild(widths);
       const textboxPanel = document.createElement("div");
       textboxPanel.className = "paperlib-native-pdf-textbox-panel";
@@ -7633,16 +7638,9 @@ class PaperLibraryPlugin extends Plugin {
       node.setAttribute("vector-effect", "non-scaling-stroke");
       group.appendChild(node);
     } else {
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", String(x1));
-      line.setAttribute("y1", String(y1));
-      line.setAttribute("x2", String(x2));
-      line.setAttribute("y2", String(y2));
-      line.setAttribute("stroke", color.value);
-      line.setAttribute("stroke-width", String(width));
-      line.setAttribute("stroke-linecap", "round");
-      line.setAttribute("vector-effect", "non-scaling-stroke");
-      group.appendChild(line);
+      let lineEndX = x2;
+      let lineEndY = y2;
+      let head = null;
       if (type === "arrow") {
         const bounds = pageEl?.getBoundingClientRect?.();
         const pageWidth = Math.max(1, bounds?.width || 1);
@@ -7653,21 +7651,34 @@ class PaperLibraryPlugin extends Plugin {
         if (length > 2) {
           const ux = dx / length;
           const uy = dy / length;
-          const size = Math.max(7, width * 3.5);
-          const half = size * 0.42;
+          const size = Math.max(10, width * 4);
+          const half = size * 0.45;
+          // 线段止于箭头底部，避免圆头笔帽从箭尖后面露出来
           const baseX = x2 - ux * size / pageWidth * 1000;
           const baseY = y2 - uy * size / pageHeight * 1000;
+          lineEndX = baseX;
+          lineEndY = baseY;
           const leftX = baseX - uy * half / pageWidth * 1000;
           const leftY = baseY + ux * half / pageHeight * 1000;
           const rightX = baseX + uy * half / pageWidth * 1000;
           const rightY = baseY - ux * half / pageHeight * 1000;
-          const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
           head.setAttribute("points", `${x2},${y2} ${leftX},${leftY} ${rightX},${rightY}`);
           head.setAttribute("fill", color.value);
           head.setAttribute("stroke", "none");
-          group.appendChild(head);
         }
       }
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(x1));
+      line.setAttribute("y1", String(y1));
+      line.setAttribute("x2", String(lineEndX));
+      line.setAttribute("y2", String(lineEndY));
+      line.setAttribute("stroke", color.value);
+      line.setAttribute("stroke-width", String(width));
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("vector-effect", "non-scaling-stroke");
+      group.appendChild(line);
+      if (head) group.appendChild(head);
     }
     svg.appendChild(group);
     return group;
@@ -8790,10 +8801,11 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-shapes")?.classList.toggle("is-active", state.mode === "shape");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
-    const activeWidth = state.mode === "shape" ? state.shapeWidth : state.inkWidth;
-    group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
-      button.classList.toggle("is-active", Number(button.dataset.width) === Number(activeWidth || 4));
-    });
+    const activeWidth = Math.max(1.5, Math.min(8, Number(state.mode === "shape" ? state.shapeWidth : state.inkWidth) || 4));
+    const widthSlider = group.querySelector(".paperlib-native-pdf-width-slider");
+    if (widthSlider) widthSlider.value = String(activeWidth);
+    const widthValue = group.querySelector(".paperlib-native-pdf-width-value");
+    if (widthValue) widthValue.textContent = String(Math.round(activeWidth * 10) / 10);
     group.querySelectorAll(".paperlib-native-pdf-shape-tool").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.shape === (state.shapeType || "line"));
     });
