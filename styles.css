@@ -14678,12 +14678,38 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 .paperlib-native-pdf-widths .paperlib-native-pdf-width-slider {
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 18px;
+  width: 12px;
   height: 120px;
   margin: 0;
   padding: 0;
-  accent-color: var(--interactive-accent);
+  border: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
   cursor: pointer;
+}
+
+.paperlib-native-pdf-widths .paperlib-native-pdf-width-slider::-webkit-slider-runnable-track {
+  width: 3px;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    to top,
+    var(--interactive-accent) 0 var(--paperlib-width-fill, 0%),
+    var(--background-modifier-border) var(--paperlib-width-fill, 0%) 100%
+  );
+}
+
+.paperlib-native-pdf-widths .paperlib-native-pdf-width-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--background-primary);
+  background: var(--interactive-accent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+  margin-left: -3px;
 }
 
 .paperlib-native-pdf-width-value {
@@ -14691,6 +14717,7 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   font-size: 10px;
   line-height: 1;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .paperlib-native-pdf-shapes {

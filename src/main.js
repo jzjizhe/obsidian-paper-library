@@ -8806,7 +8806,11 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
     const activeWidth = Math.max(1.5, Math.min(8, Number(state.mode === "shape" ? state.shapeWidth : state.inkWidth) || 4));
     const widthSlider = group.querySelector(".paperlib-native-pdf-width-slider");
-    if (widthSlider) widthSlider.value = String(activeWidth);
+    if (widthSlider) {
+      widthSlider.value = String(activeWidth);
+      const fill = ((activeWidth - 1.5) / 6.5) * 100;
+      widthSlider.style.setProperty("--paperlib-width-fill", `${Math.max(0, Math.min(100, fill))}%`);
+    }
     const widthValue = group.querySelector(".paperlib-native-pdf-width-value");
     if (widthValue) widthValue.textContent = String(Math.round(activeWidth * 10) / 10);
     group.querySelectorAll(".paperlib-native-pdf-shape-tool").forEach((button) => {
