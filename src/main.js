@@ -7036,12 +7036,20 @@ class PaperLibraryPlugin extends Plugin {
       inkColorBar.setAttribute("aria-hidden", "true");
       ink.appendChild(inkColorBar);
       group.appendChild(ink);
-      const note = document.createElement("button");
-      note.className = "clickable-icon paperlib-native-pdf-tool is-note";
-      note.title = "Paper Library 注释";
-      note.setAttribute("aria-label", "注释" );
-      setPaperlibIcon(note, "message-square-text");
-      group.appendChild(note);
+      const textbox = document.createElement("button");
+      textbox.className = "clickable-icon paperlib-native-pdf-tool is-textbox";
+      textbox.title = "文本";
+      textbox.setAttribute("aria-label", "文本");
+      setPaperlibIcon(textbox, "square-pen");
+      group.appendChild(textbox);
+      textbox.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const wasActive = state.mode === "textbox";
+        state.mode = "textbox";
+        state.paletteOpen = wasActive ? !state.paletteOpen : true;
+        this.updateNativePdfToolbarState(container, group, state);
+      });
       const askRegion = document.createElement("button");
       askRegion.className = "clickable-icon paperlib-native-pdf-tool is-ai-region";
       askRegion.title = "圈选区域 Ask AI";
@@ -7137,27 +7145,6 @@ class PaperLibraryPlugin extends Plugin {
         event.stopPropagation();
         const wasActive = state.mode === "ink";
         state.mode = "ink";
-        state.paletteOpen = wasActive ? !state.paletteOpen : true;
-        this.updateNativePdfToolbarState(container, group, state);
-      });
-      note.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        state.mode = state.mode === "note" ? "" : "note";
-        state.paletteOpen = false;
-        this.updateNativePdfToolbarState(container, group, state);
-      });
-      const textbox = document.createElement("button");
-      textbox.className = "clickable-icon paperlib-native-pdf-tool is-textbox";
-      textbox.title = "文本框：点击页面任意位置插入";
-      textbox.setAttribute("aria-label", "插入文本框");
-      setPaperlibIcon(textbox, "square-pen");
-      group.appendChild(textbox);
-      textbox.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const wasActive = state.mode === "textbox";
-        state.mode = "textbox";
         state.paletteOpen = wasActive ? !state.paletteOpen : true;
         this.updateNativePdfToolbarState(container, group, state);
       });
