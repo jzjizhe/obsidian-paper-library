@@ -49,7 +49,7 @@
 | 15 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ⬜ 未拆分 |
 | 16 | `services/pdf-figures.js` | PDF 图片识别渲染（含 `getPdfImageRegions` 等头部工具） | ⬜ 未拆分 |
 | 17 | `services/research-workspace-store.js` | 研究画布的持久化与自动整理 | ⬜ 未拆分 |
-| 18 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ⬜ 未拆分 |
+| 18 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ✅ 已拆分 |
 | 19 | `main.js` 收尾 | 插件类只保留 onload 装配与方法委托 | ⬜ 未拆分 |
 
 ## 拆分记录
@@ -117,6 +117,10 @@
 ### ✅ 12. research-workspace-view.js
 
 2,657 行。研究画布整体搬走：PDF 懒渲染、文字层选择、荧光笔/画笔/AI 圈选、画布节点与连线。对插件的交互全部通过构造注入的 `plugin`，无需任何改动。`pdf-loading.test.js` 通过 eval 打包产物引用 `PaperResearchWorkspaceView` 顶层类名，验证了 esbuild 会把模块类提升到产物顶层作用域。逐字节搬运验证通过。
+
+### ✅ 18. services/self-update.js（阶段四开始，委托模式首个示范）
+
+189 行。自更新五方法（检查/列 zip/解压/收集文件/安装）搬到 services，方法体仅做 `this` → `plugin` 机械替换（19 处，替换数与原文一致），主类留五个单行委托壳。`update.test.js` 覆盖的 `updateInternals` 不受影响。阶段四策略落地：调用点零改动。
 
 ### ✅ 13. library-view.js
 
