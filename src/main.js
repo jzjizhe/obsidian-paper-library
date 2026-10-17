@@ -162,6 +162,32 @@ import {
   useSemanticScholar
 } from "./services/semantic-scholar.js";
 import {
+  clearPdfFigureRecognitionState,
+  computePdfFigureCacheKey,
+  createPdfFigureCatalog,
+  createRecognizedPdfFigureDragPreview,
+  emitPdfFigureProgress,
+  exportPdfFigureHighResolution,
+  getPdfFigureCatalog,
+  getPortablePdfFigurePayload,
+  installPdfFigureDragZones,
+  loadPdfFigureDocument,
+  migratePortablePdfFigureCatalogs,
+  openPdfFigureAtPoint,
+  openPdfFigureGallery,
+  paintDocLayoutFigure,
+  paintPdfImageObject,
+  pdfFigureDragToAIAttachment,
+  readRecognizedPdfFigureAsset,
+  readSyncedPdfFigurePayload,
+  renderPdfFigure,
+  renderPdfFigureCrop,
+  renderPdfThumbnail,
+  resolveRecognizedPdfFigureCache,
+  sanitizePortablePdfFigurePayload,
+  setPortablePdfFigurePayload
+} from "./services/pdf-figures.js";
+import {
   checkForPaperLibraryUpdate,
   collectPaperLibraryUpdateFiles,
   extractPaperLibraryUpdate,
@@ -6067,14 +6093,8 @@ class PaperLibraryPlugin extends Plugin {
     }
   }
 
-  clearPdfFigureRecognitionState() {
-    (this.pdfFigureCatalogCache || new Map()).forEach((entry) => {
-      try { void entry.document?.destroy?.(); } catch (_) {}
-    });
-    this.pdfFigureCatalogCache?.clear?.();
-    this.pdfFigureProgressListeners?.clear?.();
-    this.pdfFigureAssetCache?.clear?.();
-    this.pdfFigureAssetDirectoryCache?.clear?.();
+  clearPdfFigureRecognitionState(...args) {
+    return clearPdfFigureRecognitionState(this, ...args);
   }
 
   async removeDocLayoutRuntime() {
@@ -6097,11 +6117,8 @@ class PaperLibraryPlugin extends Plugin {
     new Notice("已删除图片识别运行时、模型与缓存");
   }
 
-  emitPdfFigureProgress(pdfPath, state) {
-    const listeners = this.pdfFigureProgressListeners?.get(pdfPath);
-    listeners?.forEach((listener) => {
-      try { listener(state); } catch (_) {}
-    });
+  emitPdfFigureProgress(...args) {
+    return emitPdfFigureProgress(this, ...args);
   }
 
   async runDocLayoutFigureExtraction(pdfPath, onProgress) {
@@ -6280,69 +6297,20 @@ class PaperLibraryPlugin extends Plugin {
     };
   }
 
-  getPortablePdfFigurePayload(pdfPath) {
-    const path = normalizePath(pdfPath || "");
-    if (!path) return null;
-    const paper = this.settings.papers.find((item) => (
-      normalizePath(item.pdfPath || "") === path
-      || (item.attachments || []).some((attachment) => normalizePath(attachment.path || "") === path)
-    ));
-    const payload = paper?.figureCatalogs?.[path]
-      || (normalizePath(paper?.pdfPath || "") === path ? paper?.figureCatalog : null);
-    return Array.isArray(payload?.figures) ? payload : null;
+  getPortablePdfFigurePayload(...args) {
+    return getPortablePdfFigurePayload(this, ...args);
   }
 
-  sanitizePortablePdfFigurePayload(payload = {}) {
-    const numericFields = ["pageNumber", "pageWidth", "pageHeight", "x", "y", "width", "height", "confidence"];
-    const figures = (Array.isArray(payload.figures) ? payload.figures : []).map((figure, index) => {
-      const portable = {
-        figureKey: String(figure.figureKey || `doclayout:${figure.pageNumber || 1}:${index + 1}`),
-        source: String(figure.source || payload.engine || "doclayout-yolo-onnx"),
-        label: String(figure.label || `Figure ${index + 1}`),
-        caption: String(figure.caption || "")
-      };
-      numericFields.forEach((key) => { portable[key] = Number(figure[key]) || 0; });
-      if (figure.objectId) portable.objectId = String(figure.objectId);
-      return portable;
-    }).filter((figure) => figure.pageNumber > 0 && figure.width > 0 && figure.height > 0);
-    return {
-      version: 1,
-      engine: String(payload.engine || "doclayout-yolo-onnx"),
-      totalPages: Number(payload.totalPages || payload.pageCount) || 0,
-      updatedAt: new Date().toISOString(),
-      figures
-    };
+  sanitizePortablePdfFigurePayload(...args) {
+    return sanitizePortablePdfFigurePayload(this, ...args);
   }
 
-  setPortablePdfFigurePayload(pdfPath, payload) {
-    const path = normalizePath(pdfPath || "");
-    const paper = this.settings.papers.find((item) => (
-      normalizePath(item.pdfPath || "") === path
-      || (item.attachments || []).some((attachment) => normalizePath(attachment.path || "") === path)
-    ));
-    if (!paper || !Array.isArray(payload?.figures)) return false;
-    const portable = this.sanitizePortablePdfFigurePayload(payload);
-    paper.figureCatalogs ||= {};
-    const previous = paper.figureCatalogs[path];
-    const comparable = (value) => JSON.stringify({
-      engine: value?.engine || "",
-      totalPages: Number(value?.totalPages) || 0,
-      figures: value?.figures || []
-    });
-    if (comparable(previous) === comparable(portable)) return false;
-    paper.figureCatalogs[path] = portable;
-    return true;
+  setPortablePdfFigurePayload(...args) {
+    return setPortablePdfFigurePayload(this, ...args);
   }
 
-  async computePdfFigureCacheKey(pdfPath, file) {
-    const input = `${normalizePath(pdfPath || "")}:${file?.stat?.mtime || 0}:${file?.stat?.size || 0}:doclayout-onnx-v1`;
-    if (!this.isMobileApp()) {
-      return require("crypto").createHash("sha1").update(input).digest("hex");
-    }
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle || typeof TextEncoder !== "function") return "";
-    const digest = await subtle.digest("SHA-1", new TextEncoder().encode(input));
-    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  computePdfFigureCacheKey(...args) {
+    return computePdfFigureCacheKey(this, ...args);
   }
 
   getPluginVaultPath(relativePath = "") {
@@ -6354,21 +6322,8 @@ class PaperLibraryPlugin extends Plugin {
     return normalizePath([directory, relativePath].filter(Boolean).join("/"));
   }
 
-  async readSyncedPdfFigurePayload(pdfPath) {
-    const path = normalizePath(pdfPath || "");
-    const file = this.app.vault.getAbstractFileByPath(path);
-    const adapter = this.app.vault.adapter;
-    if (!file || !adapter?.read) return null;
-    const cacheKey = await this.computePdfFigureCacheKey(path, file);
-    if (!cacheKey) return null;
-    const manifestPath = this.getPluginVaultPath(`figure-cache/${cacheKey}/figures.json`);
-    try {
-      if (adapter.exists && !(await adapter.exists(manifestPath))) return null;
-      const payload = JSON.parse(await adapter.read(manifestPath));
-      return Array.isArray(payload?.figures) ? payload : null;
-    } catch (_) {
-      return null;
-    }
+  readSyncedPdfFigurePayload(...args) {
+    return readSyncedPdfFigurePayload(this, ...args);
   }
 
   async readPdfBinary(file) {
@@ -6392,495 +6347,60 @@ class PaperLibraryPlugin extends Plugin {
     }
   }
 
-  async loadPdfFigureDocument(pdfPath) {
-    const path = normalizePath(pdfPath || "");
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!file) throw new Error("找不到 PDF 文件");
-    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.readPdfBinary(file)]);
-    return pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+  loadPdfFigureDocument(...args) {
+    return loadPdfFigureDocument(this, ...args);
   }
 
-  createPdfFigureCatalog(pdfPath, payload, document = null) {
-    const figures = Array.isArray(payload?.figures) ? payload.figures : [];
-    const pageSizes = new Map();
-    figures.forEach((figure) => pageSizes.set(Number(figure.pageNumber), {
-      width: Number(figure.pageWidth) || 1,
-      height: Number(figure.pageHeight) || 1
-    }));
-    return {
-      path: normalizePath(pdfPath || ""),
-      engine: payload?.engine || "doclayout-yolo-onnx",
-      device: payload?.device || "cpu",
-      document,
-      figures,
-      placements: figures,
-      pageSizes
-    };
+  createPdfFigureCatalog(...args) {
+    return createPdfFigureCatalog(this, ...args);
   }
 
-  async resolveRecognizedPdfFigureCache(pdfPath, cacheKey, figureKey) {
-    const path = normalizePath(pdfPath || "");
-    const adapter = this.app.vault.adapter;
-    const resolutionKey = `${path}:${cacheKey}`;
-    const cached = this.pdfFigureAssetDirectoryCache?.get?.(resolutionKey);
-    if (cached) return cached;
-    const cacheRoot = this.getPluginVaultPath("figure-cache");
-    const currentDirectory = normalizePath(`${cacheRoot}/${cacheKey}`);
-    const portable = this.getPortablePdfFigurePayload(path);
-    const signature = (figure) => [
-      figure?.figureKey || "", Number(figure?.pageNumber) || 0,
-      Number(figure?.pageWidth) || 0, Number(figure?.pageHeight) || 0,
-      Number(figure?.x) || 0, Number(figure?.y) || 0,
-      Number(figure?.width) || 0, Number(figure?.height) || 0
-    ].join(":");
-    const expected = new Set((portable?.figures || []).map(signature));
-    const inspect = async (directory) => {
-      try {
-        const manifestPath = normalizePath(`${directory}/figures.json`);
-        if (adapter.exists && !(await adapter.exists(manifestPath))) return null;
-        const payload = JSON.parse(await adapter.read(manifestPath));
-        const figures = Array.isArray(payload?.figures) ? payload.figures : [];
-        if (!figures.some((figure) => figure.figureKey === figureKey)) return null;
-        const overlap = expected.size ? figures.filter((figure) => expected.has(signature(figure))).length : 1;
-        return overlap > 0 ? { directory, payload, overlap } : null;
-      } catch (_) {
-        return null;
-      }
-    };
-    const current = await inspect(currentDirectory);
-    if (current) {
-      this.pdfFigureAssetDirectoryCache ||= new Map();
-      this.pdfFigureAssetDirectoryCache.set(resolutionKey, current);
-      return current;
-    }
-    // Older recognized images may remain valid after a sync or metadata-only
-    // timestamp change even though the current cache hash differs. Match the
-    // saved layout coordinates against existing recognition manifests instead
-    // of falling back to cropping the source page.
-    if (!expected.size) throw new Error("这张图片没有可用的识别结果，请重新执行图片识别");
-    let listing = null;
-    try {
-      if (typeof adapter.list === "function") listing = await adapter.list(cacheRoot);
-    } catch (_) {}
-    const directories = Array.from(listing?.folders || []).map((directory) => normalizePath(directory));
-    const matches = (await Promise.all(directories.map(inspect))).filter(Boolean)
-      .sort((left, right) => right.overlap - left.overlap);
-    const resolved = matches[0];
-    if (!resolved) throw new Error("这张图片没有可用的识别结果，请重新执行图片识别");
-    this.pdfFigureAssetDirectoryCache ||= new Map();
-    this.pdfFigureAssetDirectoryCache.set(resolutionKey, resolved);
-    return resolved;
+  resolveRecognizedPdfFigureCache(...args) {
+    return resolveRecognizedPdfFigureCache(this, ...args);
   }
 
-  async readRecognizedPdfFigureAsset(pdfPath, figureKey) {
-    const path = normalizePath(pdfPath || "");
-    const file = this.app.vault.getAbstractFileByPath(path);
-    const adapter = this.app.vault.adapter;
-    if (!path || !file || !adapter?.read || !adapter?.readBinary) throw new Error("找不到已识别图片的本地缓存");
-    const cacheKey = await this.computePdfFigureCacheKey(path, file);
-    if (!cacheKey) throw new Error("无法定位已识别图片缓存");
-    const assetKey = `${cacheKey}:${figureKey}`;
-    const cached = this.pdfFigureAssetCache?.get?.(assetKey);
-    if (cached) return await cached;
-    const loading = (async () => {
-      const { directory, payload } = await this.resolveRecognizedPdfFigureCache(path, cacheKey, figureKey);
-      const figure = (payload.figures || []).find((item) => item.figureKey === figureKey);
-      const filename = String(figure?.cropPath || "").split(/[\\/]/).pop();
-      if (!figure || !filename || !/^figure-[\w.-]+\.png$/i.test(filename)) {
-        throw new Error("这张图片没有可用的识别结果，请重新执行图片识别");
-      }
-      const bytes = await adapter.readBinary(`${directory}/${filename}`);
-      return {
-        figure,
-        dataUrl: arrayBufferToDataUrl(bytes, "image/png"),
-        byteLength: bytes.byteLength || bytes.length || 0
-      };
-    })();
-    this.pdfFigureAssetCache ||= new Map();
-    this.pdfFigureAssetCache.set(assetKey, loading);
-    try {
-      const asset = await loading;
-      this.pdfFigureAssetCache.set(assetKey, asset);
-      return asset;
-    } catch (error) {
-      this.pdfFigureAssetCache.delete(assetKey);
-      throw error;
-    }
+  readRecognizedPdfFigureAsset(...args) {
+    return readRecognizedPdfFigureAsset(this, ...args);
   }
 
-  async createRecognizedPdfFigureDragPreview(asset) {
-    if (!asset?.dataUrl) return null;
-    const image = new Image();
-    image.src = asset.dataUrl;
-    await image.decode();
-    const sourceWidth = Math.max(1, image.naturalWidth || image.width);
-    const sourceHeight = Math.max(1, image.naturalHeight || image.height);
-    const scale = Math.min(1, 260 / sourceWidth, 180 / sourceHeight);
-    const preview = document.createElement("canvas");
-    preview.className = "paperlib-pdf-figure-drag-preview";
-    preview.width = Math.max(1, Math.round(sourceWidth * scale));
-    preview.height = Math.max(1, Math.round(sourceHeight * scale));
-    const context = preview.getContext("2d", { alpha: false });
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, preview.width, preview.height);
-    context.drawImage(image, 0, 0, preview.width, preview.height);
-    return preview;
+  createRecognizedPdfFigureDragPreview(...args) {
+    return createRecognizedPdfFigureDragPreview(this, ...args);
   }
 
-  installPdfFigureDragZones(root, pdfPath, paper, catalog) {
-    const path = normalizePath(pdfPath || "");
-    if (!root?.querySelectorAll || !path || !catalog?.figures) return false;
-    const pages = [
-      ...(root.matches?.(".paperlib-selectable-pdf-page, .page[data-page-number], .page") ? [root] : []),
-      ...root.querySelectorAll(".paperlib-selectable-pdf-page, .page[data-page-number], .page")
-    ];
-    let mounted = false;
-    pages.forEach((pageEl) => {
-      const pageNumber = Number(pageEl.dataset?.page || pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
-      if (!pageNumber) return;
-      const figures = catalog.figures.filter((figure) => Number(figure.pageNumber) === pageNumber && figure.width > 0 && figure.height > 0);
-      const signature = `${path}:${figures.map((figure) => figure.figureKey || `${figure.x}:${figure.y}:${figure.width}:${figure.height}`).join("|")}`;
-      const existing = Array.from(pageEl.querySelectorAll(":scope > .paperlib-pdf-figure-drag-zone"));
-      if (pageEl.dataset.paperlibFigureDragSignature === signature && existing.length === figures.length) {
-        mounted ||= existing.length > 0;
-        return;
-      }
-      existing.forEach((zone) => zone.remove());
-      pageEl.dataset.paperlibFigureDragSignature = signature;
-      figures.forEach((figure, index) => {
-        const pageWidth = Math.max(1, Number(figure.pageWidth) || catalog.pageSizes?.get?.(pageNumber)?.width || 1);
-        const pageHeight = Math.max(1, Number(figure.pageHeight) || catalog.pageSizes?.get?.(pageNumber)?.height || 1);
-        const zone = document.createElement("div");
-        zone.className = "paperlib-pdf-figure-drag-zone";
-        zone.draggable = true;
-        zone.title = "拖动图片到 Paper Composer";
-        zone.setAttribute("aria-label", `${figure.label || `第 ${index + 1} 张图片`}，可拖动到 Paper Composer`);
-        Object.assign(zone.style, {
-          left: `${Math.max(0, Number(figure.x) / pageWidth) * 100}%`,
-          top: `${Math.max(0, Number(figure.y) / pageHeight) * 100}%`,
-          width: `${Math.max(0, Math.min(1 - Number(figure.x) / pageWidth, Number(figure.width) / pageWidth)) * 100}%`,
-          height: `${Math.max(0, Math.min(1 - Number(figure.y) / pageHeight, Number(figure.height) / pageHeight)) * 100}%`
-        });
-        const preparePreview = () => {
-          if (zone.paperlibFigureAsset || zone.paperlibFigureAssetLoading) return;
-          zone.classList.remove("is-unavailable");
-          zone.paperlibFigureAssetLoading = true;
-          void this.readRecognizedPdfFigureAsset(path, String(figure.figureKey || ""))
-            .then(async (asset) => {
-              if (!zone.isConnected) return;
-              zone.paperlibFigureAsset = asset;
-              zone.paperlibDragPreview = await this.createRecognizedPdfFigureDragPreview(asset);
-              zone.classList.add("is-ready");
-            })
-            .catch((error) => {
-              zone.paperlibFigureAssetError = error;
-              zone.classList.add("is-unavailable");
-            })
-            .finally(() => { zone.paperlibFigureAssetLoading = false; });
-        };
-        zone.addEventListener("pointerenter", preparePreview);
-        zone.addEventListener("focus", preparePreview);
-        zone.addEventListener("pointerdown", preparePreview);
-        zone.addEventListener("dragstart", (event) => {
-          const transfer = event.dataTransfer;
-          if (!transfer) return;
-          preparePreview();
-          const payload = {
-            path,
-            page: pageNumber,
-            figureKey: String(figure.figureKey || ""),
-            label: String(figure.label || `第 ${pageNumber} 页图片 ${index + 1}`),
-            caption: String(figure.caption || "")
-          };
-          transfer.setData("application/x-paperlib-pdf-figure", JSON.stringify(payload));
-          transfer.effectAllowed = "copy";
-          const preview = zone.paperlibDragPreview;
-          if (preview) {
-            document.body.appendChild(preview);
-            transfer.setDragImage(preview, Math.round(preview.width / 2), Math.round(preview.height / 2));
-            window.setTimeout(() => preview.remove(), 0);
-          }
-          zone.classList.add("is-dragging");
-        });
-        zone.addEventListener("dragend", () => {
-          zone.classList.remove("is-dragging");
-          zone.paperlibDragPreview?.remove?.();
-        });
-        pageEl.appendChild(zone);
-        mounted = true;
-      });
-    });
-    return mounted;
+  installPdfFigureDragZones(...args) {
+    return installPdfFigureDragZones(this, ...args);
   }
 
-  async pdfFigureDragToAIAttachment(rawPayload) {
-    const payload = typeof rawPayload === "string" ? JSON.parse(rawPayload) : rawPayload;
-    const path = normalizePath(payload?.path || "");
-    if (!path) throw new Error("拖入的图片缺少来源路径");
-    const asset = await this.readRecognizedPdfFigureAsset(path, String(payload.figureKey || ""));
-    const figure = asset.figure;
-    const file = this.app.vault.getAbstractFileByPath(path);
-    const page = Number(payload.page || figure.pageNumber) || null;
-    const label = String(payload.label || figure.label || `${file?.basename || "文档"} · 第 ${page || "—"} 页图片`);
-    return {
-      type: "image",
-      label,
-      detail: `${Number(figure.width) || "—"} × ${Number(figure.height) || "—"}`,
-      dataUrl: asset.dataUrl,
-      mime: "image/png",
-      path,
-      page,
-      key: `pdf-figure:${path}:${payload.figureKey || `${page}:${figure.x}:${figure.y}:${figure.width}:${figure.height}`}`
-    };
+  pdfFigureDragToAIAttachment(...args) {
+    return pdfFigureDragToAIAttachment(this, ...args);
   }
 
-  async migratePortablePdfFigureCatalogs() {
-    if (this.isMobileApp()) return false;
-    const fs = require("fs");
-    const nodePath = require("path");
-    let changed = false;
-    for (const paper of this.settings.papers) {
-      const paths = [paper.pdfPath, ...(paper.attachments || []).map((attachment) => attachment.path)]
-        .map((value) => normalizePath(value || ""))
-        .filter((value) => value && !/^https?:\/\//i.test(value));
-      for (const path of paths) {
-        if (this.getPortablePdfFigurePayload(path)) continue;
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (!file) continue;
-        const cacheKey = await this.computePdfFigureCacheKey(path, file);
-        const manifestPath = this.getDesktopPluginPath(nodePath.join("figure-cache", cacheKey, "figures.json"));
-        if (!fs.existsSync(manifestPath)) continue;
-        try {
-          const payload = JSON.parse(await fs.promises.readFile(manifestPath, "utf8"));
-          if (this.setPortablePdfFigurePayload(path, payload)) changed = true;
-        } catch (error) {
-          console.warn("Paper Library: failed to migrate a portable figure catalog", error);
-        }
-      }
-    }
-    if (changed) await this.saveSettings();
-    return changed;
+  migratePortablePdfFigureCatalogs(...args) {
+    return migratePortablePdfFigureCatalogs(this, ...args);
   }
 
-  async getPdfFigureCatalog(pdfPath, onProgress) {
-    const path = normalizePath(pdfPath || "");
-    if (!path) throw new Error("缺少 PDF 路径");
-    const cached = this.pdfFigureCatalogCache.get(path);
-    if (cached) {
-      onProgress?.({ stage: "complete", figures: cached.figures.length, cached: true });
-      return cached;
-    }
-    // Figure coordinates are portable and sufficient for rendering crops from
-    // the PDF with PDF.js. Always reuse them before checking the Python/ONNX
-    // runtime. This keeps already-recognized figures viewable when a Python
-    // update breaks the disposable venv, and is also the mobile sync path.
-    const portablePayload = this.getPortablePdfFigurePayload(path) || await this.readSyncedPdfFigurePayload(path);
-    if (portablePayload) {
-      const payload = portablePayload;
-      if (!this.getPortablePdfFigurePayload(path) && this.setPortablePdfFigurePayload(path, payload)) {
-        await this.saveSettings();
-      }
-      const document = await this.loadPdfFigureDocument(path);
-      const catalog = this.createPdfFigureCatalog(path, payload, document);
-      this.pdfFigureCatalogCache.set(path, catalog);
-      onProgress?.({ stage: "complete", figures: catalog.figures.length, cached: true });
-      return catalog;
-    }
-    if (this.isMobileApp()) {
-      throw new Error("尚未找到桌面端已识别的图片索引，请先在桌面端识别并同步一次");
-    }
-    if (!this.settings.enableFigureRecognition) throw new Error("图片识别尚未开启");
-    if (!this.isDocLayoutRuntimeInstalled()) throw new Error("图片识别运行时尚未安装，请在插件设置中完成下载");
-    if (onProgress) {
-      if (!this.pdfFigureProgressListeners.has(path)) this.pdfFigureProgressListeners.set(path, new Set());
-      this.pdfFigureProgressListeners.get(path).add(onProgress);
-    }
-    const pending = this.pdfFigureCatalogLoading.get(path);
-    if (pending) return pending;
-    const loading = (async () => {
-      this.emitPdfFigureProgress(path, { stage: "model", current: 0, total: 0, figures: 0 });
-      const payload = await this.runDocLayoutFigureExtraction(path, (state) => this.emitPdfFigureProgress(path, state));
-      const catalog = this.createPdfFigureCatalog(path, payload);
-      this.pdfFigureCatalogCache.set(path, catalog);
-      if (this.setPortablePdfFigurePayload(path, payload)) await this.saveSettings();
-      this.emitPdfFigureProgress(path, { stage: "complete", current: payload.totalPages || 0, total: payload.totalPages || 0, figures: catalog.figures.length });
-      return catalog;
-    })();
-    this.pdfFigureCatalogLoading.set(path, loading);
-    try {
-      return await loading;
-    } catch (error) {
-      this.emitPdfFigureProgress(path, { stage: "error", message: error.message || String(error) });
-      throw error;
-    } finally {
-      this.pdfFigureCatalogLoading.delete(path);
-      this.pdfFigureProgressListeners.delete(path);
-    }
+  getPdfFigureCatalog(...args) {
+    return getPdfFigureCatalog(this, ...args);
   }
 
-  async openPdfFigureAtPoint(pdfPath, paper, pageNumber, xRatio, yRatio) {
-    const path = normalizePath(pdfPath || "");
-    if (!this.isMobileApp() && !this.settings.enableFigureRecognition && !this.getPortablePdfFigurePayload(path)) return false;
-    if (!path || this.pdfFigureOpenBusy.has(path)) return false;
-    this.pdfFigureOpenBusy.add(path);
-    try {
-      const catalog = await this.getPdfFigureCatalog(path);
-      const pageSize = catalog.pageSizes.get(Number(pageNumber));
-      if (!pageSize) return false;
-      const x = Math.max(0, Math.min(1, Number(xRatio))) * pageSize.width;
-      const y = Math.max(0, Math.min(1, Number(yRatio))) * pageSize.height;
-      const hits = catalog.placements
-        .map((figure) => ({
-          figure,
-          index: catalog.figures.findIndex((item) => item.figureKey === figure.figureKey)
-        }))
-        .filter(({ figure }) => {
-          if (figure.pageNumber !== Number(pageNumber)) return false;
-          const padding = Math.max(5, Math.min(18, Math.min(figure.width, figure.height) * 0.04));
-          return x >= figure.x - padding && x <= figure.x + figure.width + padding
-            && y >= figure.y - padding && y <= figure.y + figure.height + padding;
-        })
-        .sort((a, b) => a.figure.width * a.figure.height - b.figure.width * b.figure.height);
-      if (!hits.length) return false;
-      new PdfFigureCarouselModal(this.app, this, paper, path, catalog.figures, hits[0].index).open();
-      return true;
-    } catch (error) {
-      console.error("Paper Library: failed to open PDF figure viewer", error);
-      if (!this.isMobileApp()) new Notice(`图片识别失败：${error.message || error}`);
-      return false;
-    } finally {
-      this.pdfFigureOpenBusy.delete(path);
-    }
+  openPdfFigureAtPoint(...args) {
+    return openPdfFigureAtPoint(this, ...args);
   }
 
-  async openPdfFigureGallery(pdfPath, paper) {
-    const path = normalizePath(pdfPath || "");
-    const mobile = this.isMobileApp();
-    const hasPortableCatalog = Boolean(this.getPortablePdfFigurePayload(path));
-    if (!mobile && !this.settings.enableFigureRecognition && !hasPortableCatalog) {
-      return new Notice("请先在 Paper Library 设置中开启 PDF 图片识别");
-    }
-    if (!mobile && !this.isDocLayoutRuntimeInstalled() && !hasPortableCatalog) {
-      return new Notice("图片识别运行时尚未安装，请在设置中完成下载");
-    }
-    if (!path || this.pdfFigureOpenBusy.has(path)) return;
-    this.pdfFigureOpenBusy.add(path);
-    const loadingNotice = new Notice(mobile ? "正在读取已识别图片…" : "正在提取整篇 PDF 的图片…", 0);
-    try {
-      const catalog = await this.getPdfFigureCatalog(path);
-      loadingNotice.hide?.();
-      if (!catalog.figures.length) return new Notice("这篇 PDF 中没有识别到可显示的图片");
-      new PdfFigureGalleryModal(this.app, this, paper, path, catalog.figures).open();
-    } catch (error) {
-      loadingNotice.hide?.();
-      console.error("Paper Library: failed to open PDF figure gallery", error);
-      new Notice(`${mobile ? "图片打开失败" : "图片提取失败"}：${error.message || error}`);
-    } finally {
-      this.pdfFigureOpenBusy.delete(path);
-    }
+  openPdfFigureGallery(...args) {
+    return openPdfFigureGallery(this, ...args);
   }
 
-  async renderPdfFigure(pdfPath, figure, canvas, options = {}) {
-    const catalog = await this.getPdfFigureCatalog(pdfPath);
-    const thumbnail = Boolean(options.thumbnail);
-    if (figure.cropPath && !this.isMobileApp()) return this.paintDocLayoutFigure(canvas, figure.cropPath, thumbnail);
-    if (!catalog.document) catalog.document = await this.loadPdfFigureDocument(pdfPath);
-    const page = await catalog.document.getPage(figure.pageNumber);
-    if (figure.objectId) {
-      try {
-        const image = await this.getPdfImageObject(page, figure.objectId);
-        if (image && (image.bitmap || image.data)) return this.paintPdfImageObject(canvas, image, thumbnail);
-      } catch (error) {
-        console.warn("Paper Library: direct PDF image extraction failed; using page crop", error);
-      }
-    }
-    return this.renderPdfFigureCrop(page, figure, canvas, thumbnail);
+  renderPdfFigure(...args) {
+    return renderPdfFigure(this, ...args);
   }
 
-  async exportPdfFigureHighResolution(pdfPath, figure) {
-    const path = normalizePath(pdfPath || "");
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!file) throw new Error("找不到 PDF 文件");
-    const [pdfjs, buffer] = await Promise.all([loadPdfJs(), this.readPdfBinary(file)]);
-    const pdfDocument = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-    try {
-      const page = await pdfDocument.getPage(Math.max(1, Number(figure.pageNumber) || 1));
-      const baseViewport = page.getViewport({ scale: 1 });
-      const pageWidth = Math.max(1, Number(figure.pageWidth) || baseViewport.width);
-      const pageHeight = Math.max(1, Number(figure.pageHeight) || baseViewport.height);
-      const xRatio = Math.max(0, Math.min(1, Number(figure.x) / pageWidth));
-      const yRatio = Math.max(0, Math.min(1, Number(figure.y) / pageHeight));
-      const widthRatio = Math.max(1 / pageWidth, Math.min(1 - xRatio, Number(figure.width) / pageWidth));
-      const heightRatio = Math.max(1 / pageHeight, Math.min(1 - yRatio, Number(figure.height) / pageHeight));
-
-      const targetDpi = 1200;
-      let renderScale = targetDpi / 72;
-      const baseCropWidth = baseViewport.width * widthRatio;
-      const baseCropHeight = baseViewport.height * heightRatio;
-      const requestedWidth = baseCropWidth * renderScale;
-      const requestedHeight = baseCropHeight * renderScale;
-      const maxDimension = 8192;
-      const maxPixels = 32 * 1024 * 1024;
-      const safetyScale = Math.min(
-        1,
-        maxDimension / Math.max(1, requestedWidth, requestedHeight),
-        Math.sqrt(maxPixels / Math.max(1, requestedWidth * requestedHeight))
-      );
-      renderScale *= safetyScale;
-
-      const viewport = page.getViewport({ scale: renderScale });
-      const cropX = viewport.width * xRatio;
-      const cropY = viewport.height * yRatio;
-      const width = Math.max(1, Math.round(viewport.width * widthRatio));
-      const height = Math.max(1, Math.round(viewport.height * heightRatio));
-      const canvas = window.document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d", { alpha: false });
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, width, height);
-      await page.render({
-        canvasContext: context,
-        viewport,
-        transform: [1, 0, 0, 1, -cropX, -cropY]
-      }).promise;
-      const blob = await new Promise((resolve, reject) => canvas.toBlob(
-        (value) => value ? resolve(value) : reject(new Error("PNG 编码失败")),
-        "image/png"
-      ));
-      return {
-        blob,
-        width,
-        height,
-        dpi: Math.max(72, Math.round(72 * renderScale))
-      };
-    } finally {
-      await pdfDocument.destroy?.();
-    }
+  exportPdfFigureHighResolution(...args) {
+    return exportPdfFigureHighResolution(this, ...args);
   }
 
-  async paintDocLayoutFigure(canvas, cropPath, thumbnail = false) {
-    const fs = require("fs");
-    const bytes = await fs.promises.readFile(cropPath);
-    const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-    try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      const sourceWidth = Math.max(1, image.naturalWidth || image.width);
-      const sourceHeight = Math.max(1, image.naturalHeight || image.height);
-      const maxDimension = thumbnail ? 420 : 2800;
-      const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-      const displayWidth = thumbnail
-        ? Math.max(120, Math.min(260, sourceWidth))
-        : Math.max(320, Math.min(1200, sourceWidth));
-      return { width: displayWidth, height: displayWidth * sourceHeight / sourceWidth };
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+  paintDocLayoutFigure(...args) {
+    return paintDocLayoutFigure(this, ...args);
   }
 
   async getPdfImageObject(page, objectId) {
@@ -6908,95 +6428,12 @@ class PaperLibraryPlugin extends Plugin {
     });
   }
 
-  paintPdfImageObject(canvas, image, thumbnail = false) {
-    const sourceWidth = Math.max(1, Number(image.width || image.bitmap?.width) || 1);
-    const sourceHeight = Math.max(1, Number(image.height || image.bitmap?.height) || 1);
-    const maxDimension = thumbnail ? 420 : 2800;
-    const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-    const width = Math.max(1, Math.round(sourceWidth * scale));
-    const height = Math.max(1, Math.round(sourceHeight * scale));
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    if (image.bitmap) {
-      context.drawImage(image.bitmap, 0, 0, width, height);
-    } else {
-      const source = image.data;
-      const target = context.createImageData(width, height);
-      const pixelCount = sourceWidth * sourceHeight;
-      const inferredChannels = pixelCount ? Math.round(source.length / pixelCount) : 0;
-      const kind = Number(image.kind || 0);
-      for (let targetY = 0; targetY < height; targetY += 1) {
-        const sourceY = Math.min(sourceHeight - 1, Math.floor(targetY / scale));
-        for (let targetX = 0; targetX < width; targetX += 1) {
-          const sourceX = Math.min(sourceWidth - 1, Math.floor(targetX / scale));
-          const targetIndex = (targetY * width + targetX) * 4;
-          if (kind === 1 || inferredChannels < 1) {
-            const rowBytes = Math.ceil(sourceWidth / 8);
-            const bit = (source[sourceY * rowBytes + (sourceX >> 3)] >> (7 - (sourceX & 7))) & 1;
-            const value = bit ? 255 : 0;
-            target.data[targetIndex] = value;
-            target.data[targetIndex + 1] = value;
-            target.data[targetIndex + 2] = value;
-            target.data[targetIndex + 3] = 255;
-          } else if (kind === 3 || inferredChannels === 4) {
-            const sourceIndex = (sourceY * sourceWidth + sourceX) * 4;
-            target.data[targetIndex] = source[sourceIndex];
-            target.data[targetIndex + 1] = source[sourceIndex + 1];
-            target.data[targetIndex + 2] = source[sourceIndex + 2];
-            target.data[targetIndex + 3] = source[sourceIndex + 3];
-          } else {
-            const sourceIndex = (sourceY * sourceWidth + sourceX) * 3;
-            target.data[targetIndex] = source[sourceIndex];
-            target.data[targetIndex + 1] = source[sourceIndex + 1];
-            target.data[targetIndex + 2] = source[sourceIndex + 2];
-            target.data[targetIndex + 3] = 255;
-          }
-        }
-      }
-      context.putImageData(target, 0, 0);
-    }
-    const displayWidth = thumbnail
-      ? Math.max(120, Math.min(260, sourceWidth))
-      : Math.max(320, Math.min(1200, sourceWidth));
-    return { width: displayWidth, height: displayWidth * sourceHeight / sourceWidth };
+  paintPdfImageObject(...args) {
+    return paintPdfImageObject(this, ...args);
   }
 
-  async renderPdfFigureCrop(page, figure, canvas, thumbnail = false) {
-    const baseViewport = page.getViewport({ scale: 1 });
-    const sourcePageWidth = Math.max(1, Number(figure.pageWidth) || baseViewport.width);
-    const sourcePageHeight = Math.max(1, Number(figure.pageHeight) || baseViewport.height);
-    const xRatio = Math.max(0, Math.min(1, Number(figure.x) / sourcePageWidth));
-    const yRatio = Math.max(0, Math.min(1, Number(figure.y) / sourcePageHeight));
-    const widthRatio = Math.max(1 / sourcePageWidth, Math.min(1 - xRatio, Number(figure.width) / sourcePageWidth));
-    const heightRatio = Math.max(1 / sourcePageHeight, Math.min(1 - yRatio, Number(figure.height) / sourcePageHeight));
-    const baseCropWidth = Math.max(1, baseViewport.width * widthRatio);
-    const renderScale = thumbnail
-      ? Math.max(0.8, Math.min(2.2, 420 / baseCropWidth))
-      : Math.max(1.5, Math.min(4, 1800 / baseCropWidth));
-    const viewport = page.getViewport({ scale: renderScale });
-    const cropX = viewport.width * xRatio;
-    const cropY = viewport.height * yRatio;
-    const width = Math.max(1, Math.ceil(viewport.width * widthRatio));
-    const height = Math.max(1, Math.ceil(viewport.height * heightRatio));
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.save();
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.restore();
-    await page.render({
-      canvasContext: context,
-      viewport,
-      transform: [1, 0, 0, 1, -cropX, -cropY]
-    }).promise;
-    const displayWidth = thumbnail
-      ? Math.max(120, Math.min(260, baseCropWidth))
-      : Math.max(320, Math.min(1200, baseCropWidth * 1.35));
-    return { width: displayWidth, height: displayWidth * heightRatio * baseViewport.height / baseCropWidth };
+  renderPdfFigureCrop(...args) {
+    return renderPdfFigureCrop(this, ...args);
   }
 
   handleNativePdfFigureClick(event, leaf, container) {
@@ -11546,32 +10983,8 @@ class PaperLibraryPlugin extends Plugin {
     return task;
   }
 
-  async renderPdfThumbnail(path, canvas) {
-    if (!path || /^https?:\/\//i.test(path) || !canvas?.getContext) return false;
-    let document = null;
-    try {
-      const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-      if (!file) return false;
-      const buffer = await this.app.vault.readBinary(file);
-      const pdfjs = await loadPdfJs();
-      document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-      const page = await document.getPage(1);
-      const natural = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(1.4, 120 / natural.width) });
-      const ratio = globalThis.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.floor(viewport.width * ratio));
-      canvas.height = Math.max(1, Math.floor(viewport.height * ratio));
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
-      const context = canvas.getContext("2d");
-      await page.render({ canvasContext: context, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] }).promise;
-      return true;
-    } catch (error) {
-      console.warn(`Paper Library: failed to render attachment thumbnail for ${path}`, error);
-      return false;
-    } finally {
-      await document?.destroy?.();
-    }
+  renderPdfThumbnail(...args) {
+    return renderPdfThumbnail(this, ...args);
   }
 
   async addPaperAttachments(paper, files) {

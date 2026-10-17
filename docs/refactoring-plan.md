@@ -47,7 +47,7 @@
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
 | 15 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ✅ 已拆分 |
-| 16 | `services/pdf-figures.js` | PDF 图片识别渲染（含 `getPdfImageRegions` 等头部工具） | ⬜ 未拆分 |
+| 16 | `services/pdf-figures.js` | PDF 图片识别渲染（头部死代码已删除） | ✅ 已拆分 |
 | 17 | `services/research-workspace-store.js` | 研究画布的持久化与自动整理 | ⬜ 未拆分 |
 | 18 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ✅ 已拆分 |
 | 19 | `main.js` 收尾 | 插件类只保留 onload 装配与方法委托 | ⬜ 未拆分 |
@@ -117,6 +117,10 @@
 ### ✅ 12. research-workspace-view.js
 
 2,657 行。研究画布整体搬走：PDF 懒渲染、文字层选择、荧光笔/画笔/AI 圈选、画布节点与连线。对插件的交互全部通过构造注入的 `plugin`，无需任何改动。`pdf-loading.test.js` 通过 eval 打包产物引用 `PaperResearchWorkspaceView` 顶层类名，验证了 esbuild 会把模块类提升到产物顶层作用域。逐字节搬运验证通过。
+
+### ✅ 16. services/pdf-figures.js
+
+717 行。24 个方法：识别结果目录的加载/缓存/迁移、画布拖拽区、位图渲染（DocLayout 裁剪 / PDF 图像对象）与高分辨率导出。DocLayout 运行时的安装/卸载属管线域，留在主类等后续管线服务。计划中的 `getPdfImageRegions`/`getPdfFigureCaptions`/`pdfMatrixPoint` 经全仓库检索确认是 DocLayout 管线取代的旧实现死代码，已单独提交删除（`fcd0e4c`）。逆变换验证（`plugin`→`this` 还原后与原文逐字节一致）通过。
 
 ### ✅ 15. services/semantic-scholar.js
 
