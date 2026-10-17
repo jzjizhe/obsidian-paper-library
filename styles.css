@@ -9285,7 +9285,7 @@ button.paperlib-file-open {
   height: min(88vh, 880px);
   padding: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+  border: 1px solid var(--color-purple, #a855f7);
   border-radius: 20px;
   box-shadow: 0 32px 90px rgb(0 0 0 / 26%);
 }
@@ -14658,6 +14658,46 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   display: none;
 }
 
+.paperlib-native-pdf-sizes {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-sizes {
+  display: flex;
+}
+
+.paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-colors,
+.paperlib-native-textbox-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
+  display: none;
+}
+
+.paperlib-native-pdf-size {
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.paperlib-native-pdf-size:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.paperlib-native-pdf-size.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
 .paperlib-native-ink-mode .paperlib-native-pdf-palette .paperlib-native-pdf-widths {
   display: flex;
 }
@@ -14788,14 +14828,14 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   cursor: grab;
 }
 
-.paperlib-pdf-textbox-card:hover {
-  border-color: color-mix(in srgb, var(--interactive-accent) 80%, transparent);
+.paperlib-pdf-textbox-card:hover,
+.paperlib-pdf-textbox-card.is-editing {
+  border-color: var(--color-purple, #a855f7);
+  box-shadow: 0 2px 10px rgb(168 85 247 / 25%);
 }
 
 .paperlib-pdf-textbox-card.is-editing {
   cursor: text;
-  border-color: var(--interactive-accent);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 18%);
 }
 
 .paperlib-pdf-textbox-content {
@@ -14812,39 +14852,3 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   cursor: crosshair !important;
 }
 
-/* 插入文本框时的字号输入 */
-.paperlib-pdf-textbox-size-popover {
-  position: fixed;
-  z-index: 10001;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
-  color: var(--text-normal);
-  font-size: 12px;
-}
-
-.paperlib-pdf-textbox-size-popover input {
-  width: 48px;
-  padding: 2px 4px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 12px;
-  text-align: center;
-}
-
-.paperlib-pdf-textbox-size-popover button {
-  padding: 2px 9px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-size: 12px;
-  cursor: pointer;
-}

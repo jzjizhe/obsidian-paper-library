@@ -831,7 +831,6 @@ class PaperLibraryPlugin extends Plugin {
 
   onunload() {
     this.stopExtensionServer();
-    this.dismissPdfTextBoxSizePopover?.();
     void this.flushPdfAnnotationSyncs();
     this.composerMountObserver?.disconnect?.();
     this.composerMountObserver = null;
@@ -6846,7 +6845,7 @@ class PaperLibraryPlugin extends Plugin {
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
-          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, paletteOpen: false, busy: false
+          mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 11, paletteOpen: false, busy: false
         };
         existingState.highlightColor ||= existingState.color || "yellow";
         existingState.inkColor ||= existingState.color || "yellow";
@@ -6873,11 +6872,12 @@ class PaperLibraryPlugin extends Plugin {
       }
       container.classList.add("paperlib-native-pdf-host");
       const state = this.nativePdfStates.get(container) || {
-        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, paletteOpen: false, busy: false
+        mode: "", highlightColor: String(this.settings.defaultHighlightColor || "yellow").toLocaleLowerCase(), inkColor: "yellow", inkWidth: 4, textboxFontSize: Number(this.settings.pdfTextBoxFontSize) || 11, paletteOpen: false, busy: false
       };
       state.highlightColor ||= state.color || "yellow";
       state.inkColor ||= state.color || "yellow";
       state.inkWidth ||= 4;
+      state.textboxFontSize ||= Number(this.settings.pdfTextBoxFontSize) || 11;
       state.paletteOpen = Boolean(state.paletteOpen);
       this.nativePdfStates.set(container, state);
       const group = document.createElement("div");
@@ -6949,6 +6949,26 @@ class PaperLibraryPlugin extends Plugin {
         widths.appendChild(button);
       });
       palette.appendChild(widths);
+      const sizes = document.createElement("div");
+      sizes.className = "paperlib-native-pdf-sizes";
+      [9, 11, 13, 15, 18, 24].forEach((size) => {
+        const button = document.createElement("button");
+        button.className = "paperlib-native-pdf-size";
+        button.dataset.size = String(size);
+        button.textContent = String(size);
+        button.title = `字号 ${size}`;
+        button.setAttribute("aria-label", `文本框字号 ${size}`);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.textboxFontSize = size;
+          this.settings.pdfTextBoxFontSize = size;
+          void this.saveSettings();
+          this.updateNativePdfToolbarState(container, group, state);
+        });
+        sizes.appendChild(button);
+      });
+      palette.appendChild(sizes);
       group.appendChild(palette);
       const ink = document.createElement("button");
       ink.className = "clickable-icon paperlib-native-pdf-tool is-ink";
@@ -7080,8 +7100,9 @@ class PaperLibraryPlugin extends Plugin {
       textbox.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        state.mode = state.mode === "textbox" ? "" : "textbox";
-        state.paletteOpen = false;
+        const wasActive = state.mode === "textbox";
+        state.mode = "textbox";
+        state.paletteOpen = wasActive ? !state.paletteOpen : true;
         this.updateNativePdfToolbarState(container, group, state);
       });
       askRegion.addEventListener("click", (event) => {
@@ -7144,7 +7165,7 @@ class PaperLibraryPlugin extends Plugin {
                   width: 0.32
                 };
                 const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
-                this.showPdfTextBoxSizePopover(event, paper, file, pageNumber, box);
+                void this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize);
               }
             }
             return;
@@ -7958,53 +7979,6 @@ class PaperLibraryPlugin extends Plugin {
     return Math.max(8, Math.min(24, value));
   }
 
-  showPdfTextBoxSizePopover(event, paper, file, pageNumber, box) {
-    this.dismissPdfTextBoxSizePopover?.();
-    const doc = this.app.workspace.containerEl?.ownerDocument || document;
-    const popover = doc.createElement("div");
-    popover.className = "paperlib-pdf-textbox-size-popover";
-    const label = doc.createElement("span");
-    label.textContent = "字号";
-    const input = doc.createElement("input");
-    input.type = "number";
-    input.min = "8";
-    input.max = "24";
-    input.step = "1";
-    input.value = String(Number(this.settings.pdfTextBoxFontSize) || 11);
-    const confirm = doc.createElement("button");
-    confirm.type = "button";
-    confirm.textContent = "插入";
-    popover.append(label, input, confirm);
-    doc.body.appendChild(popover);
-    const left = Math.min((doc.defaultView?.innerWidth || 1200) - 170, event.clientX + 10);
-    const top = Math.min((doc.defaultView?.innerHeight || 800) - 60, event.clientY + 10);
-    popover.style.left = `${Math.max(8, left)}px`;
-    popover.style.top = `${Math.max(8, top)}px`;
-    const close = () => {
-      popover.remove();
-      doc.removeEventListener("pointerdown", outside, true);
-      doc.removeEventListener("keydown", keys, true);
-      if (this.dismissPdfTextBoxSizePopover === close) this.dismissPdfTextBoxSizePopover = null;
-    };
-    const submit = () => {
-      const size = Math.max(8, Math.min(24, Math.round(Number(input.value) || 11)));
-      close();
-      void this.createPdfTextBox(paper, file, pageNumber, box, size);
-    };
-    const outside = (outsideEvent) => {
-      if (!popover.contains(outsideEvent.target)) close();
-    };
-    const keys = (keyEvent) => {
-      if (keyEvent.key === "Escape") { keyEvent.stopPropagation(); close(); }
-      else if (keyEvent.key === "Enter") { keyEvent.preventDefault(); submit(); }
-    };
-    confirm.addEventListener("click", (clickEvent) => { clickEvent.preventDefault(); clickEvent.stopPropagation(); submit(); });
-    doc.addEventListener("pointerdown", outside, true);
-    doc.addEventListener("keydown", keys, true);
-    this.dismissPdfTextBoxSizePopover = close;
-    doc.defaultView?.requestAnimationFrame?.(() => { input.focus(); input.select?.(); });
-  }
-
   async createPdfTextBox(paper, file, pageNumber, box, fontSize = null) {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !file?.path || !pageNumber) return null;
@@ -8429,14 +8403,16 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-textbox")?.classList.toggle("is-active", state.mode === "textbox");
-    if (state.mode !== "textbox") this.dismissPdfTextBoxSizePopover?.();
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
     group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
-      button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 3));
+      button.classList.toggle("is-active", Number(button.dataset.width) === Number(state.inkWidth || 4));
+    });
+    group.querySelectorAll(".paperlib-native-pdf-size").forEach((button) => {
+      button.classList.toggle("is-active", Number(button.dataset.size) === Number(state.textboxFontSize || 11));
     });
     group.querySelector(".paperlib-native-pdf-palette")?.classList.toggle(
-      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline"].includes(state.mode))
+      "is-visible", Boolean(state.paletteOpen && ["highlight", "ink", "underline", "textbox"].includes(state.mode))
     );
     group.querySelectorAll(".paperlib-native-pdf-swatch").forEach((swatch) => {
       swatch.classList.toggle("is-active", swatch.dataset.color === paletteColor.id);
