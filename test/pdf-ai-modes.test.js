@@ -3,7 +3,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
+const readSrcTree = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const full = path.join(dir, entry.name);
+  return entry.isDirectory() ? readSrcTree(full) : (entry.name.endsWith(".js") ? [full] : []);
+});
+const main = readSrcTree(path.join(root, "src")).map((f) => fs.readFileSync(f, "utf8")).join("\n");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "pipeline", "models.json"), "utf8"));
 const worker = fs.readFileSync(path.join(root, "pipeline", "worker.cjs"), "utf8");
