@@ -7209,24 +7209,30 @@ class PaperLibraryPlugin extends Plugin {
           if (active?.mode === "textbox") {
             const file = leaf.view?.file || this.app.workspace.getActiveFile();
             const paper = file ? this.getPaperForPdfFile(file) : null;
-            if (!pageEl || !container.contains(pageEl)) {
-              new Notice("请点击 PDF 页面内部插入文本框");
-              return;
-            }
             if (!paper) {
               new Notice("请先把这个文档加入论文库");
               return;
             }
+            let targetPageEl = pageEl && container.contains(pageEl) ? pageEl : null;
+            let bounds = targetPageEl?.getBoundingClientRect?.();
+            if (!targetPageEl || !bounds?.width || !bounds?.height) {
+              // 点在两页之间的空白处：吸附到最近的页面，允许卡片落在页间
+              const nearest = this.findNearestNativePdfPage(container, event.clientX, event.clientY);
+              if (!nearest) {
+                new Notice("请点击 PDF 页面附近插入文本框");
+                return;
+              }
+              targetPageEl = nearest.pageEl;
+              bounds = nearest.rect;
+            }
             event.preventDefault();
             event.stopPropagation();
-            const bounds = pageEl.getBoundingClientRect();
-            if (!(bounds.width > 0 && bounds.height > 0)) return;
             const box = {
               x: Math.max(0, Math.min(0.94, (event.clientX - bounds.left) / bounds.width)),
-              y: Math.max(0, Math.min(0.97, (event.clientY - bounds.top) / bounds.height)),
+              y: Math.max(-0.5, Math.min(1.5, (event.clientY - bounds.top) / bounds.height)),
               width: 0.32
             };
-            const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+            const pageNumber = Number(targetPageEl.dataset?.pageNumber || targetPageEl.getAttribute?.("data-page-number"));
             this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize, state.textboxColor)
               .catch((error) => {
                 console.error("Paper Library: failed to insert text box", error);
@@ -7878,6 +7884,19 @@ class PaperLibraryPlugin extends Plugin {
     layer.appendChild(popup);
   }
 
+  findNearestNativePdfPage(container, clientX, clientY) {
+    let best = null;
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+      const rect = pageEl.getBoundingClientRect?.();
+      if (!rect?.width || !rect?.height) return;
+      const deltaX = Math.max(rect.left - clientX, 0, clientX - rect.right);
+      const deltaY = Math.max(rect.top - clientY, 0, clientY - rect.bottom);
+      const distance = Math.hypot(deltaX, deltaY);
+      if (!best || distance < best.distance) best = { pageEl, rect, distance };
+    });
+    return best && best.distance <= 320 ? best : null;
+  }
+
   renderNativePdfTextBoxes(leaf, container, force = false) {
     const file = leaf?.view?.file || this.app.workspace.getActiveFile();
     const paper = this.getPaperForPdfFile(file);
@@ -7891,23 +7910,46 @@ class PaperLibraryPlugin extends Plugin {
       && mark.box
       && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
     ));
-    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+    const pages = [...(container.querySelectorAll(".page[data-page-number], .page") || [])];
+    if (!pages.length) return;
+    const layerParent = pages[0].offsetParent || pages[0].parentElement || container;
+    // 清理旧层（包括早期按页挂载的层），统一挂到页面容器上，允许卡片落在页间空白
+    container.querySelectorAll(".paperlib-native-pdf-textbox-layer").forEach((element) => {
+      if (element.parentElement !== layerParent) element.remove();
+    });
+    if (!boxes.length) {
+      layerParent.querySelectorAll(":scope > .paperlib-native-pdf-textbox-layer").forEach((element) => element.remove());
+      return;
+    }
+    const geometry = new Map();
+    pages.forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       if (!pageNumber) return;
-      const pageBoxes = boxes.filter((mark) => Number(mark.page) === pageNumber);
-      const signature = pageBoxes.map((mark) => (
-        `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${Number(mark.box.width || 0.32).toFixed(4)}:${String(mark.comment || "").length}`
-      )).join("|");
-      let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
-      if (!force && layer?.dataset.signature === signature) return;
-      if (!layer) {
-        layer = document.createElement("div");
-        layer.className = "paperlib-native-pdf-textbox-layer";
-        pageEl.appendChild(layer);
-      }
-      layer.replaceChildren();
-      layer.dataset.signature = signature;
-      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl));
+      geometry.set(pageNumber, {
+        pageEl,
+        left: pageEl.offsetLeft,
+        top: pageEl.offsetTop,
+        width: pageEl.offsetWidth,
+        height: pageEl.offsetHeight
+      });
+    });
+    const signature = boxes.map((mark) => {
+      const geo = geometry.get(Number(mark.page));
+      return `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${String(mark.comment || "").length}:${mark.fontSize || 0}:${mark.textColor || ""}:${geo?.width || 0}:${geo?.height || 0}:${geo?.left || 0}:${geo?.top || 0}`;
+    }).join("|");
+    let layer = layerParent.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
+    if (!force && layer?.dataset.signature === signature) return;
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "paperlib-native-pdf-textbox-layer";
+      layerParent.appendChild(layer);
+    }
+    layer.replaceChildren();
+    layer.dataset.signature = signature;
+    boxes.forEach((mark) => {
+      const geo = geometry.get(Number(mark.page));
+      if (!geo || !geo.width || !geo.height) return;
+      this.appendPdfTextBoxCard(layer, mark, paper, geo);
     });
   }
 
@@ -7922,20 +7964,22 @@ class PaperLibraryPlugin extends Plugin {
     });
   }
 
-  appendPdfTextBoxCard(layer, mark, paper, pageEl) {
+  appendPdfTextBoxCard(layer, mark, paper, geo) {
     const box = mark.box || { x: 0.6, y: 0.3, width: 0.02 };
     const x = Math.max(0, Math.min(0.94, Number(box.x) || 0));
-    const y = Math.max(0, Math.min(0.97, Number(box.y) || 0));
+    const y = Math.max(-0.5, Math.min(1.5, Number(box.y) || 0));
+    const left = geo.left + x * geo.width;
+    const top = geo.top + y * geo.height;
     const card = document.createElement("div");
     card.className = "paperlib-pdf-textbox-card";
     card.dataset.markId = mark.id;
-    card.style.left = `${x * 100}%`;
-    card.style.top = `${y * 100}%`;
-    card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+    card.style.maxWidth = `${Math.max(60, (1 - x) * geo.width)}px`;
     card.style.fontSize = `${this.getPdfTextBoxFontSize(mark)}px`;
     const content = document.createElement("div");
-    content.style.color = this.getPdfTextBoxTextColorValue(mark);
     content.className = "paperlib-pdf-textbox-content";
+    content.style.color = this.getPdfTextBoxTextColorValue(mark);
     content.setAttribute("contenteditable", "false");
     content.spellcheck = false;
     content.textContent = mark.comment || "";
@@ -7975,16 +8019,13 @@ class PaperLibraryPlugin extends Plugin {
         void this.deletePdfTextBox(paper, mark);
         return;
       }
-      const pageRect = pageEl.getBoundingClientRect?.();
-      const width = pageRect?.width > 0
-        ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
-        : (Number(box.width) || 0.3);
-      const nextX = Math.min(x, Math.max(0, 1 - width));
-      void this.updatePdfTextBox(paper, mark.id, { comment: value, box: { x: nextX, y, width } });
-      content.textContent = value;
+      const width = geo.width > 0 ? Math.max(0.02, Math.min(0.9, card.offsetWidth / geo.width)) : (Number(box.width) || 0.3);
+      void this.updatePdfTextBox(paper, mark.id, {
+        comment: value,
+        box: { x, y, width }
+      });
     });
 
-    // 空白处按下：拖动；原地松开：进入编辑
     let press = null;
     const move = (event) => {
       if (!press) return;
@@ -7992,15 +8033,10 @@ class PaperLibraryPlugin extends Plugin {
       const deltaY = event.clientY - press.startY;
       if (!press.moved && Math.hypot(deltaX, deltaY) < 4) return;
       press.moved = true;
-      const pageRect = pageEl.getBoundingClientRect?.();
-      if (!pageRect?.width || !pageRect?.height) return;
-      const nextX = Math.max(0, Math.min(0.94, press.x + deltaX / pageRect.width));
-      const nextY = Math.max(0, Math.min(0.97, press.y + deltaY / pageRect.height));
-      card.style.left = `${nextX * 100}%`;
-      card.style.top = `${nextY * 100}%`;
-      card.style.maxWidth = `${Math.max(0.2, 1 - nextX) * 100}%`;
-      card.dataset.dragX = String(nextX);
-      card.dataset.dragY = String(nextY);
+      card.style.left = `${press.left + deltaX}px`;
+      card.style.top = `${press.top + deltaY}px`;
+      card.dataset.deltaX = String(deltaX);
+      card.dataset.deltaY = String(deltaY);
     };
     const up = () => {
       window.removeEventListener("pointermove", move, true);
@@ -8009,12 +8045,11 @@ class PaperLibraryPlugin extends Plugin {
       press = null;
       if (!current) return;
       if (current.moved) {
-        const nextX = Number(card.dataset.dragX || current.x);
-        const nextY = Number(card.dataset.dragY || current.y);
-        const pageRect = pageEl.getBoundingClientRect?.();
-        const width = pageRect?.width > 0
-          ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
-          : (Number(box.width) || 0.3);
+        const deltaX = Number(card.dataset.deltaX || 0);
+        const deltaY = Number(card.dataset.deltaY || 0);
+        const nextX = Math.max(0, Math.min(0.94, x + deltaX / Math.max(1, geo.width)));
+        const nextY = Math.max(-0.5, Math.min(1.5, y + deltaY / Math.max(1, geo.height)));
+        const width = geo.width > 0 ? Math.max(0.02, Math.min(0.9, card.offsetWidth / geo.width)) : (Number(box.width) || 0.3);
         void this.updatePdfTextBox(paper, mark.id, { box: { x: nextX, y: nextY, width } });
         return;
       }
@@ -8025,7 +8060,7 @@ class PaperLibraryPlugin extends Plugin {
       if (card.dataset.editing === "true") return;
       event.preventDefault();
       event.stopPropagation();
-      press = { startX: event.clientX, startY: event.clientY, x, y, moved: false };
+      press = { startX: event.clientX, startY: event.clientY, left, top, moved: false };
       window.addEventListener("pointermove", move, true);
       window.addEventListener("pointerup", up, true);
     });
