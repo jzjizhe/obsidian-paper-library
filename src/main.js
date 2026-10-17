@@ -6714,7 +6714,8 @@ class PaperLibraryPlugin extends Plugin {
         };
         const pointerUp = (event) => {
           const active = this.nativePdfStates.get(container);
-          if (!["highlight", "note"].includes(active?.mode) || active.busy) return;
+          // 空模式（纯选择）也要放行：选中文字后弹出颜色标注条
+          if (!["highlight", "note", ""].includes(active?.mode ?? "") || active.busy) return;
           void this.handleNativePdfPointerUp(event, leaf, container, active);
         };
         const contextMenu = (event) => {
