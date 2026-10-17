@@ -341,6 +341,7 @@ class PaperLibraryPlugin extends Plugin {
     this.pendingPdfAnnotationSyncs = new Map();
     this.nativePdfPageSizeCache = new Map();
     this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
+    this.nativeOverlayHidden = false;
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
@@ -421,6 +422,25 @@ class PaperLibraryPlugin extends Plugin {
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
     this.addCommand({
+      id: "debug-toggle-pdf-highlight-overlay",
+      name: "调试：显示/隐藏高亮覆盖层",
+      callback: () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const container = leaf?.view?.containerEl;
+        if (!container) {
+          new Notice("请先打开一个 PDF");
+          return;
+        }
+        this.nativeOverlayHidden = !this.nativeOverlayHidden;
+        container.querySelectorAll(".paperlib-native-pdf-highlight-layer").forEach((layer) => {
+          layer.style.display = this.nativeOverlayHidden ? "none" : "";
+        });
+        new Notice(this.nativeOverlayHidden ? "已隐藏高亮覆盖层（PDF 自身渲染仍可见则说明注释被画进页面）" : "已恢复高亮覆盖层");
+      }
+    });
+    this.addCommand({
       id: "debug-native-pdf-annotations",
       name: "调试：输出 PDF 注释层结构",
       callback: async () => {
@@ -438,6 +458,12 @@ class PaperLibraryPlugin extends Plugin {
         const diagnostics = {
           file: file.path,
           pageCount: pageEls.length,
+          containerClasses: String(container.className || ""),
+          containerChildren: [...container.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`).slice(0, 20),
+          canvasCount: container.querySelectorAll("canvas").length,
+          annotationLikeElements: [...container.querySelectorAll("[class*='annot' i], [data-annotation-id]")]
+            .slice(0, 20)
+            .map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}#${el.getAttribute?.("data-annotation-id") || ""}`),
           pages: []
         };
         let ownIds = new Map();
@@ -447,6 +473,26 @@ class PaperLibraryPlugin extends Plugin {
           diagnostics.ownIdsError = String(error?.message || error);
         }
         diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        try {
+          const buffer = await this.readPdfBinary(file);
+          const pdfjs = await loadPdfJs();
+          const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+          try {
+            const page = await document.getPage(1);
+            const annotations = await page.getAnnotations();
+            diagnostics.annotationSample = (annotations || []).slice(0, 5).map((annotation) => ({
+              id: annotation.id,
+              subtype: annotation.subtype,
+              titleStr: annotation.titleObj?.str || "",
+              nm: annotation.nm || "",
+              keys: Object.keys(annotation)
+            }));
+          } finally {
+            await document.destroy?.();
+          }
+        } catch (error) {
+          diagnostics.annotationSampleError = String(error?.message || error);
+        }
         pageEls.slice(0, 3).forEach((pageEl) => {
           const pageNumber = pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number");
           const annotationLayer = pageEl.querySelector(".annotationLayer");
@@ -7140,6 +7186,7 @@ class PaperLibraryPlugin extends Plugin {
     layer.setAttribute("viewBox", "0 0 1000 1000");
     layer.setAttribute("preserveAspectRatio", "none");
     layer.setAttribute("aria-hidden", "true");
+    if (this.nativeOverlayHidden) layer.style.display = "none";
     pageEl.appendChild(layer);
     return layer;
   }
