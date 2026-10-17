@@ -738,6 +738,17 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
+      .setName("双击打开论文的方式")
+      .setDesc("双击论文卡片或表格行时打开原生 PDF 阅读器，还是研究画布（摘录/笔记工作台）。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("native", "原生 PDF 阅读器（推荐）")
+        .addOption("canvas", "研究画布")
+        .setValue(this.plugin.settings.pdfOpenMode || "native")
+        .onChange(async (value) => {
+          this.plugin.settings.pdfOpenMode = value;
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
       .setName("研究画布笔记标题")
       .setDesc("摘录卡片、想法与连接自动同步到论文笔记中的此标题下。")
       .addText((text) => text

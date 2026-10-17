@@ -339,6 +339,7 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfMutationQueues = new Map();
     this.pendingPdfAnnotationSyncs = new Map();
     this.nativePdfPageSizeCache = new Map();
+    this.nativeSelectionToolbarCleanup = null;
     this.nativePdfStates = new WeakMap();
     this.nativePdfBindings = new WeakMap();
     this.nativePdfBindingList = [];
@@ -553,6 +554,7 @@ class PaperLibraryPlugin extends Plugin {
     this.nativeAiRegionCleanup = null;
     this.nativeSelectionDragCleanup?.(true);
     this.nativeSelectionDragCleanup = null;
+    this.dismissNativePdfSelectionToolbar();
     this.nativeInkDrawingCleanup?.(true);
     this.nativeInkDrawingCleanup = null;
     this.pdfInkRegionDragCleanup?.(true);
@@ -7301,9 +7303,105 @@ class PaperLibraryPlugin extends Plugin {
     container.classList.toggle("paperlib-native-ai-region-mode", state.mode === "ai-region");
   }
 
+  showNativePdfSelectionToolbar(leaf, textLayer) {
+    this.dismissNativePdfSelectionToolbar();
+    const doc = textLayer.ownerDocument;
+    const owner = doc.defaultView;
+    const selection = owner?.getSelection?.();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return;
+    if (!String(selection.toString()).trim()) return;
+    const selectedRange = selection.getRangeAt(0).cloneRange();
+    const toolbar = doc.body.createDiv({
+      cls: "paperlib-pdf-selection-toolbar",
+      attr: { role: "toolbar", "aria-label": "选中文字的高亮颜色" }
+    });
+    toolbar.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    CANVAS_HIGHLIGHT_COLORS.forEach((color) => {
+      const button = toolbar.createEl("button", {
+        cls: "paperlib-pdf-selection-color",
+        attr: { type: "button", "aria-label": `用${color.label}高亮`, title: `${color.label}高亮` }
+      });
+      button.dataset.color = color.id;
+      button.style.setProperty("--swatch-color", color.value);
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!toolbar.isConnected) return;
+        this.dismissNativePdfSelectionToolbar();
+        selection.removeAllRanges();
+        try {
+          const context = await this.getNativePdfSelectionContext(leaf, textLayer);
+          if (context?.text) await this.saveCanvasHighlight(context, color.id);
+          else new Notice("请先把这个文档加入论文库");
+        } catch (error) {
+          console.error("Paper Library: failed to highlight PDF selection", error);
+          new Notice(`高亮失败：${error.message || error}`);
+        }
+      });
+    });
+    const popup = toolbar.getBoundingClientRect();
+    const rect = selectedRange.getBoundingClientRect();
+    const viewport = owner.visualViewport;
+    const left = viewport?.offsetLeft || 0;
+    const top = viewport?.offsetTop || 0;
+    const right = left + (viewport?.width || owner.innerWidth);
+    const bottom = top + (viewport?.height || owner.innerHeight);
+    const x = Math.min(right - popup.width - 8, Math.max(left + 8, (rect.left + rect.right - popup.width) / 2));
+    const y = rect.top - popup.height - 8 >= top + 8 ? rect.top - popup.height - 8 : rect.bottom + 8;
+    toolbar.style.left = `${Math.max(left + 8, x)}px`;
+    toolbar.style.top = `${Math.max(top + 8, Math.min(bottom - popup.height - 8, y))}px`;
+    const dismiss = () => this.dismissNativePdfSelectionToolbar();
+    const outside = (event) => { if (!toolbar.contains(event.target)) dismiss(); };
+    const keydown = (event) => { if (event.key === "Escape" || event.metaKey || event.ctrlKey) dismiss(); };
+    const selectionChanged = () => {
+      if (!selection.rangeCount || selection.isCollapsed) { dismiss(); return; }
+      const range = selection.getRangeAt(0);
+      if (range.compareBoundaryPoints(0, selectedRange) || range.compareBoundaryPoints(2, selectedRange)) dismiss();
+    };
+    doc.addEventListener("pointerdown", outside, true);
+    doc.addEventListener("keydown", keydown, true);
+    doc.addEventListener("selectionchange", selectionChanged);
+    owner.addEventListener("scroll", dismiss, true);
+    owner.addEventListener("resize", dismiss);
+    owner.addEventListener("blur", dismiss);
+    viewport?.addEventListener("resize", dismiss);
+    viewport?.addEventListener("scroll", dismiss);
+    const leafChange = this.app.workspace?.on?.("active-leaf-change", dismiss);
+    this.nativeSelectionToolbarCleanup = () => {
+      toolbar.remove();
+      doc.removeEventListener("pointerdown", outside, true);
+      doc.removeEventListener("keydown", keydown, true);
+      doc.removeEventListener("selectionchange", selectionChanged);
+      owner.removeEventListener("scroll", dismiss, true);
+      owner.removeEventListener("resize", dismiss);
+      owner.removeEventListener("blur", dismiss);
+      viewport?.removeEventListener("resize", dismiss);
+      viewport?.removeEventListener("scroll", dismiss);
+      if (leafChange) this.app.workspace.offref(leafChange);
+      this.nativeSelectionToolbarCleanup = null;
+    };
+  }
+
+  dismissNativePdfSelectionToolbar() {
+    this.nativeSelectionToolbarCleanup?.();
+  }
+
   async handleNativePdfPointerUp(event, leaf, container, state) {
     const textLayer = event.target?.closest?.(".textLayer");
     if (!textLayer || !container.contains(textLayer)) return;
+    // 纯选择（无工具激活）：弹出颜色标注条，等用户点颜色后再保存
+    if (!state.mode) {
+      const selection = textLayer.ownerDocument?.defaultView?.getSelection?.();
+      if (selection && !selection.isCollapsed && String(selection.toString()).trim()) {
+        this.showNativePdfSelectionToolbar(leaf, textLayer);
+      } else {
+        this.dismissNativePdfSelectionToolbar();
+      }
+      return;
+    }
     state.busy = true;
     try {
       const context = await this.getNativePdfSelectionContext(leaf, textLayer);
@@ -12773,7 +12871,8 @@ class PaperLibraryPlugin extends Plugin {
     }
     this.uiState.activePdfPaperId = paper.id;
     await this.ensurePaperNote(paper);
-    if (options.native) {
+    const openNative = options.native ?? (this.settings.pdfOpenMode !== "canvas");
+    if (openNative) {
       await this.app.workspace.getLeaf("tab").openFile(file);
       if (!this.settings.pdfAnnotationHintShown) {
         new Notice("使用 Paper Library 浮动工具栏可高亮或添加注释；批注会同步到论文笔记");

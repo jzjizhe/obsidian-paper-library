@@ -93,6 +93,7 @@ const DEFAULT_SETTINGS = {
   semanticScholarApiKey: "",
   annotationHeading: "PDF Annotations",
   pdfAnnotationWriteback: "on-leave",
+  pdfOpenMode: "native",
   researchWorkspaceHeading: "Research Workspace",
   defaultHighlightColor: "Yellow",
   tableColumnWidths: Object.fromEntries(Object.entries(PAPER_TABLE_COLUMNS).map(([key, value]) => [key, value.width])),
