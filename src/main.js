@@ -831,6 +831,7 @@ class PaperLibraryPlugin extends Plugin {
 
   onunload() {
     this.stopExtensionServer();
+    this.dismissPdfTextBoxSizePopover?.();
     void this.flushPdfAnnotationSyncs();
     this.composerMountObserver?.disconnect?.();
     this.composerMountObserver = null;
@@ -7143,7 +7144,7 @@ class PaperLibraryPlugin extends Plugin {
                   width: 0.32
                 };
                 const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
-                void this.createPdfTextBox(paper, file, pageNumber, box);
+                this.showPdfTextBoxSizePopover(event, paper, file, pageNumber, box);
               }
             }
             return;
@@ -7943,21 +7944,11 @@ class PaperLibraryPlugin extends Plugin {
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const menu = new Menu();
-      menu.addItem((item) => item
-        .setTitle("增大字号")
-        .setIcon("plus")
-        .onClick(() => { void this.changePdfTextBoxFontSize(paper, mark, 2); }));
-      menu.addItem((item) => item
-        .setTitle("减小字号")
-        .setIcon("minus")
-        .onClick(() => { void this.changePdfTextBoxFontSize(paper, mark, -2); }));
-      menu.addSeparator();
-      menu.addItem((item) => item
+      new Menu().addItem((item) => item
         .setTitle("删除文本框")
         .setIcon("trash-2")
-        .onClick(() => { void this.deletePdfTextBox(paper, mark); }));
-      menu.showAtMouseEvent(event);
+        .onClick(() => { void this.deletePdfTextBox(paper, mark); }))
+        .showAtMouseEvent(event);
     });
     layer.appendChild(card);
   }
@@ -7967,28 +7958,54 @@ class PaperLibraryPlugin extends Plugin {
     return Math.max(8, Math.min(24, value));
   }
 
-  async changePdfTextBoxFontSize(paper, mark, delta) {
-    paper = this.getCanonicalPaper(paper);
-    if (!paper) return;
-    const current = this.getPdfTextBoxFontSize(mark);
-    const next = Math.max(8, Math.min(24, current + delta));
-    if (next === current) return;
-    await this.updatePdfTextBox(paper, mark.id, { fontSize: next });
-    // 字号变化后重新测量宽度，保证写回 PDF 的矩形与显示一致
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(mark.pdfPath || paper.pdfPath || ""));
-    const leaf = this.app.workspace.getLeavesOfType?.("pdf")?.find((item) => item.view?.file?.path === file?.path);
-    const pageEl = leaf?.view?.containerEl?.querySelector?.(`.page[data-page-number="${mark.page}"]`);
-    const card = leaf?.view?.containerEl?.querySelector?.(`.paperlib-pdf-textbox-card[data-mark-id="${mark.id}"]`);
-    if (pageEl?.getBoundingClientRect && card?.offsetWidth) {
-      const pageRect = pageEl.getBoundingClientRect();
-      if (pageRect.width > 0) {
-        const width = Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width));
-        await this.updatePdfTextBox(paper, mark.id, { box: { ...(mark.box || {}), width } });
-      }
-    }
+  showPdfTextBoxSizePopover(event, paper, file, pageNumber, box) {
+    this.dismissPdfTextBoxSizePopover?.();
+    const doc = this.app.workspace.containerEl?.ownerDocument || document;
+    const popover = doc.createElement("div");
+    popover.className = "paperlib-pdf-textbox-size-popover";
+    const label = doc.createElement("span");
+    label.textContent = "字号";
+    const input = doc.createElement("input");
+    input.type = "number";
+    input.min = "8";
+    input.max = "24";
+    input.step = "1";
+    input.value = String(Number(this.settings.pdfTextBoxFontSize) || 11);
+    const confirm = doc.createElement("button");
+    confirm.type = "button";
+    confirm.textContent = "插入";
+    popover.append(label, input, confirm);
+    doc.body.appendChild(popover);
+    const left = Math.min((doc.defaultView?.innerWidth || 1200) - 170, event.clientX + 10);
+    const top = Math.min((doc.defaultView?.innerHeight || 800) - 60, event.clientY + 10);
+    popover.style.left = `${Math.max(8, left)}px`;
+    popover.style.top = `${Math.max(8, top)}px`;
+    const close = () => {
+      popover.remove();
+      doc.removeEventListener("pointerdown", outside, true);
+      doc.removeEventListener("keydown", keys, true);
+      if (this.dismissPdfTextBoxSizePopover === close) this.dismissPdfTextBoxSizePopover = null;
+    };
+    const submit = () => {
+      const size = Math.max(8, Math.min(24, Math.round(Number(input.value) || 11)));
+      close();
+      void this.createPdfTextBox(paper, file, pageNumber, box, size);
+    };
+    const outside = (outsideEvent) => {
+      if (!popover.contains(outsideEvent.target)) close();
+    };
+    const keys = (keyEvent) => {
+      if (keyEvent.key === "Escape") { keyEvent.stopPropagation(); close(); }
+      else if (keyEvent.key === "Enter") { keyEvent.preventDefault(); submit(); }
+    };
+    confirm.addEventListener("click", (clickEvent) => { clickEvent.preventDefault(); clickEvent.stopPropagation(); submit(); });
+    doc.addEventListener("pointerdown", outside, true);
+    doc.addEventListener("keydown", keys, true);
+    this.dismissPdfTextBoxSizePopover = close;
+    doc.defaultView?.requestAnimationFrame?.(() => { input.focus(); input.select?.(); });
   }
 
-  async createPdfTextBox(paper, file, pageNumber, box) {
+  async createPdfTextBox(paper, file, pageNumber, box, fontSize = null) {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !file?.path || !pageNumber) return null;
     const id = workspaceId("textbox");
@@ -8001,7 +8018,7 @@ class PaperLibraryPlugin extends Plugin {
       selection: { beginIndex: -1, beginOffset: -1, endIndex: -1, endOffset: -1 },
       selectionSource: "textbox",
       rectCoordinateSpace: "page-relative",
-      fontSize: Number(this.settings.pdfTextBoxFontSize) || 11,
+      fontSize: Math.max(8, Math.min(24, Number(fontSize) || Number(this.settings.pdfTextBoxFontSize) || 11)),
       color: "yellow",
       pdfSubtype: "FreeText",
       box: { x: box.x, y: box.y, width: box.width || 0.02 },
@@ -8412,6 +8429,7 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
     group.querySelector(".is-textbox")?.classList.toggle("is-active", state.mode === "textbox");
+    if (state.mode !== "textbox") this.dismissPdfTextBoxSizePopover?.();
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
     group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {

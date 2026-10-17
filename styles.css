@@ -9285,7 +9285,7 @@ button.paperlib-file-open {
   height: min(88vh, 880px);
   padding: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
   border-radius: 20px;
   box-shadow: 0 32px 90px rgb(0 0 0 / 26%);
 }
@@ -14789,7 +14789,7 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 }
 
 .paperlib-pdf-textbox-card:hover {
-  border-color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 80%, transparent);
 }
 
 .paperlib-pdf-textbox-card.is-editing {
@@ -14810,4 +14810,41 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 .paperlib-native-textbox-mode .textLayer,
 .paperlib-native-textbox-mode .textLayer span {
   cursor: crosshair !important;
+}
+
+/* 插入文本框时的字号输入 */
+.paperlib-pdf-textbox-size-popover {
+  position: fixed;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 25%);
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.paperlib-pdf-textbox-size-popover input {
+  width: 48px;
+  padding: 2px 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+  text-align: center;
+}
+
+.paperlib-pdf-textbox-size-popover button {
+  padding: 2px 9px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 12px;
+  cursor: pointer;
 }
