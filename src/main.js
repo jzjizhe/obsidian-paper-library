@@ -7128,6 +7128,7 @@ class PaperLibraryPlugin extends Plugin {
             });
             return;
           }
+          if (event.target?.closest?.(".paperlib-pdf-textbox-card")) return;
           if (active?.mode === "textbox") {
             const file = leaf.view?.file || this.app.workspace.getActiveFile();
             const paper = file ? this.getPaperForPdfFile(file) : null;
@@ -7834,98 +7835,110 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   appendPdfTextBoxCard(layer, mark, paper, pageEl) {
-    const box = mark.box || { x: 0.6, y: 0.3, width: 0.32 };
+    const box = mark.box || { x: 0.6, y: 0.3, width: 0.02 };
+    const x = Math.max(0, Math.min(0.94, Number(box.x) || 0));
+    const y = Math.max(0, Math.min(0.97, Number(box.y) || 0));
     const card = document.createElement("div");
     card.className = "paperlib-pdf-textbox-card";
     card.dataset.markId = mark.id;
-    card.style.left = `${Math.max(0, Math.min(0.94, Number(box.x) || 0)) * 100}%`;
-    card.style.top = `${Math.max(0, Math.min(0.97, Number(box.y) || 0)) * 100}%`;
-    card.style.width = `${Math.max(0.08, Math.min(1, Number(box.width) || 0.32)) * 100}%`;
-    const header = document.createElement("div");
-    header.className = "paperlib-pdf-textbox-header";
-    const grip = document.createElement("span");
-    grip.className = "paperlib-pdf-textbox-grip";
-    grip.title = "拖动移动";
-    setPaperlibIcon(grip, "grip-vertical");
-    header.appendChild(grip);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "paperlib-pdf-textbox-delete";
-    remove.title = "删除文本框";
-    remove.setAttribute("aria-label", "删除文本框");
-    setPaperlibIcon(remove, "trash-2");
-    header.appendChild(remove);
-    card.appendChild(header);
+    card.style.left = `${x * 100}%`;
+    card.style.top = `${y * 100}%`;
+    card.style.maxWidth = `${Math.max(0.2, 1 - x) * 100}%`;
     const content = document.createElement("div");
     content.className = "paperlib-pdf-textbox-content";
-    content.setAttribute("contenteditable", "plaintext-only");
+    content.setAttribute("contenteditable", "false");
     content.spellcheck = false;
     content.textContent = mark.comment || "";
     card.appendChild(content);
 
-    content.addEventListener("pointerdown", (event) => event.stopPropagation());
-    content.addEventListener("contextmenu", (event) => event.stopPropagation());
-    content.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        content.blur();
+    const enterEdit = () => {
+      card.dataset.editing = "true";
+      card.classList.add("is-editing");
+      content.setAttribute("contenteditable", "true");
+      content.focus();
+      const selection = content.ownerDocument?.defaultView?.getSelection?.();
+      if (selection) {
+        const range = content.ownerDocument.createRange();
+        range.selectNodeContents(content);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }
+    };
+    const leaveEdit = () => {
+      if (card.dataset.editing !== "true") return;
+      card.dataset.editing = "false";
+      card.classList.remove("is-editing");
+      content.setAttribute("contenteditable", "false");
+    };
+
+    content.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Escape") content.blur();
     });
     content.addEventListener("blur", () => {
+      if (card.dataset.editing !== "true") return;
+      leaveEdit();
       const value = content.textContent || "";
       const trimmed = value.trim();
-      if (!trimmed && !String(mark.comment || "").trim()) {
+      if (!trimmed) {
         void this.deletePdfTextBox(paper, mark);
         return;
       }
-      if (trimmed === String(mark.comment || "").trim()) return;
-      void this.updatePdfTextBox(paper, mark.id, { comment: value });
+      const pageRect = pageEl.getBoundingClientRect?.();
+      const width = pageRect?.width > 0
+        ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
+        : (Number(box.width) || 0.3);
+      const nextX = Math.min(x, Math.max(0, 1 - width));
+      void this.updatePdfTextBox(paper, mark.id, { comment: value, box: { x: nextX, y, width } });
+      content.textContent = value;
     });
 
-    const startDrag = (event) => {
+    // 空白处按下：拖动；原地松开：进入编辑
+    let press = null;
+    const move = (event) => {
+      if (!press) return;
+      const deltaX = event.clientX - press.startX;
+      const deltaY = event.clientY - press.startY;
+      if (!press.moved && Math.hypot(deltaX, deltaY) < 4) return;
+      press.moved = true;
+      const pageRect = pageEl.getBoundingClientRect?.();
+      if (!pageRect?.width || !pageRect?.height) return;
+      const nextX = Math.max(0, Math.min(0.94, press.x + deltaX / pageRect.width));
+      const nextY = Math.max(0, Math.min(0.97, press.y + deltaY / pageRect.height));
+      card.style.left = `${nextX * 100}%`;
+      card.style.top = `${nextY * 100}%`;
+      card.style.maxWidth = `${Math.max(0.2, 1 - nextX) * 100}%`;
+      card.dataset.dragX = String(nextX);
+      card.dataset.dragY = String(nextY);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      const current = press;
+      press = null;
+      if (!current) return;
+      if (current.moved) {
+        const nextX = Number(card.dataset.dragX || current.x);
+        const nextY = Number(card.dataset.dragY || current.y);
+        const pageRect = pageEl.getBoundingClientRect?.();
+        const width = pageRect?.width > 0
+          ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
+          : (Number(box.width) || 0.3);
+        void this.updatePdfTextBox(paper, mark.id, { box: { x: nextX, y: nextY, width } });
+        return;
+      }
+      enterEdit();
+    };
+    card.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      if (card.dataset.editing === "true") return;
       event.preventDefault();
       event.stopPropagation();
-      content.blur();
-      const pageRect = pageEl.getBoundingClientRect();
-      if (!pageRect.width || !pageRect.height) return;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startBox = { ...box, width: Number(box.width) || 0.32 };
-      let moved = false;
-      const move = (moveEvent) => {
-        const deltaX = moveEvent.clientX - startX;
-        const deltaY = moveEvent.clientY - startY;
-        if (!moved && Math.hypot(deltaX, deltaY) < 3) return;
-        moved = true;
-        const x = Math.max(0, Math.min(1 - startBox.width, startBox.x + deltaX / pageRect.width));
-        const y = Math.max(0, Math.min(0.97, startBox.y + deltaY / pageRect.height));
-        card.style.left = `${x * 100}%`;
-        card.style.top = `${y * 100}%`;
-        card.dataset.dragX = String(x);
-        card.dataset.dragY = String(y);
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move, true);
-        window.removeEventListener("pointerup", up, true);
-        if (!moved) return;
-        const x = Number(card.dataset.dragX || startBox.x);
-        const y = Number(card.dataset.dragY || startBox.y);
-        void this.updatePdfTextBox(paper, mark.id, { box: { ...startBox, x, y } });
-      };
+      press = { startX: event.clientX, startY: event.clientY, x, y, moved: false };
       window.addEventListener("pointermove", move, true);
       window.addEventListener("pointerup", up, true);
-    };
-    header.addEventListener("pointerdown", startDrag);
-    grip.addEventListener("pointerdown", startDrag);
-
-    remove.addEventListener("pointerdown", (event) => event.stopPropagation());
-    remove.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void this.deletePdfTextBox(paper, mark);
     });
-    card.addEventListener("pointerdown", (event) => event.stopPropagation());
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -7953,7 +7966,7 @@ class PaperLibraryPlugin extends Plugin {
       rectCoordinateSpace: "page-relative",
       color: "yellow",
       pdfSubtype: "FreeText",
-      box: { x: box.x, y: box.y, width: box.width || 0.32 },
+      box: { x: box.x, y: box.y, width: box.width || 0.02 },
       pdfRects: [],
       pdfPath: file.path,
       createdAt: new Date().toISOString()
@@ -7963,9 +7976,17 @@ class PaperLibraryPlugin extends Plugin {
     await this.saveSettings();
     await this.syncLocalPdfAnnotation(mark);
     this.refreshNativePdfTextBoxes(paper);
-    const card = this.app.workspace.getLeavesOfType?.("pdf")?.find((leaf) => leaf.view?.file?.path === file.path)
+    const content = this.app.workspace.getLeavesOfType?.("pdf")?.find((leaf) => leaf.view?.file?.path === file.path)
       ?.view?.containerEl?.querySelector?.(`.paperlib-pdf-textbox-card[data-mark-id="${id}"] .paperlib-pdf-textbox-content`);
-    card?.focus?.();
+    if (content) {
+      const card = content.closest?.(".paperlib-pdf-textbox-card");
+      if (card) {
+        card.dataset.editing = "true";
+        card.classList.add("is-editing");
+        content.setAttribute("contenteditable", "true");
+        content.focus?.();
+      }
+    }
     return mark;
   }
 
