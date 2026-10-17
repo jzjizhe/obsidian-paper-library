@@ -420,6 +420,70 @@ class PaperLibraryPlugin extends Plugin {
       }
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
+    this.addCommand({
+      id: "debug-native-pdf-annotations",
+      name: "调试：输出 PDF 注释层结构",
+      callback: async () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const file = leaf?.view?.file;
+        const container = leaf?.view?.containerEl;
+        if (!file || !container) {
+          console.warn("[Paper Library debug] 没有激活的 PDF 视图");
+          new Notice("请先打开一个 PDF 再运行诊断");
+          return;
+        }
+        const pageEls = [...container.querySelectorAll(".page")];
+        const diagnostics = {
+          file: file.path,
+          pageCount: pageEls.length,
+          pages: []
+        };
+        let ownIds = new Map();
+        try {
+          ownIds = await this.getNativePdfOwnAnnotationIds(file);
+        } catch (error) {
+          diagnostics.ownIdsError = String(error?.message || error);
+        }
+        diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        pageEls.slice(0, 3).forEach((pageEl) => {
+          const pageNumber = pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number");
+          const annotationLayer = pageEl.querySelector(".annotationLayer");
+          const annotationEls = [...pageEl.querySelectorAll("[data-annotation-id]")];
+          const overlay = pageEl.querySelector(".paperlib-native-pdf-highlight-layer");
+          diagnostics.pages.push({
+            pageNumber,
+            className: pageEl.className,
+            children: [...pageEl.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`),
+            annotationLayerPresent: Boolean(annotationLayer),
+            annotationLayerClass: annotationLayer?.className || "",
+            annotationElements: annotationEls.slice(0, 20).map((el) => ({
+              tag: el.tagName,
+              className: String(el.className?.baseVal ?? el.className),
+              annotationId: el.dataset?.annotationId || el.getAttribute?.("data-annotation-id") || "",
+              display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
+              rect: (() => {
+                const rect = el.getBoundingClientRect?.();
+                return rect ? { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : null;
+              })()
+            })),
+            highlightPaths: overlay?.querySelectorAll?.("path")?.length || 0,
+            overlaySignature: overlay?.dataset?.signature || ""
+          });
+        });
+        console.log("[Paper Library debug] PDF 注释层结构", diagnostics);
+        console.log(JSON.stringify(diagnostics, null, 2));
+        if (navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+            new Notice("诊断信息已输出到控制台并复制到剪贴板");
+            return;
+          } catch (error) { /* 剪贴板不可用时仅输出控制台 */ }
+        }
+        new Notice("诊断信息已输出到开发者控制台");
+      }
+    });
     this.addCommand({ id: "organize-paper-files", name: "Organize paper PDFs and notes", callback: () => this.organizeLibraryFiles(true) });
     this.addCommand({
       id: "flush-pdf-annotation-writeback",
