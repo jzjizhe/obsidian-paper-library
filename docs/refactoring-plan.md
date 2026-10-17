@@ -46,7 +46,7 @@
 
 | # | 模块 | 内容 | 状态 |
 |---|------|------|------|
-| 15 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ⬜ 未拆分 |
+| 15 | `services/semantic-scholar.js` | Semantic Scholar 请求与缓存 | ✅ 已拆分 |
 | 16 | `services/pdf-figures.js` | PDF 图片识别渲染（含 `getPdfImageRegions` 等头部工具） | ⬜ 未拆分 |
 | 17 | `services/research-workspace-store.js` | 研究画布的持久化与自动整理 | ⬜ 未拆分 |
 | 18 | `services/self-update.js` | 插件自更新流程（使用 update-checker） | ✅ 已拆分 |
@@ -117,6 +117,10 @@
 ### ✅ 12. research-workspace-view.js
 
 2,657 行。研究画布整体搬走：PDF 懒渲染、文字层选择、荧光笔/画笔/AI 圈选、画布节点与连线。对插件的交互全部通过构造注入的 `plugin`，无需任何改动。`pdf-loading.test.js` 通过 eval 打包产物引用 `PaperResearchWorkspaceView` 顶层类名，验证了 esbuild 会把模块类提升到产物顶层作用域。逐字节搬运验证通过。
+
+### ✅ 15. services/semantic-scholar.js
+
+456 行。18 个方法（请求、重试退避、别名索引缓存、字段映射、兜底合并）+ 两个 `SEMANTIC_SCHOLAR_PAPER_CACHE_*` 常量一并归位。教训：第一轮依赖池是手工列的，漏了 `normalizePaperTags` 导致运行时 ReferenceError——此后每个服务模块都做"导出符号全表扫描"验证缺失导入。`semantic-scholar.test.js` 的失败点与基线逐字节一致（URL 断言差异是历史遗留）。
 
 ### ✅ 18. services/self-update.js（阶段四开始，委托模式首个示范）
 
