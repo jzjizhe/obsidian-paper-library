@@ -7203,6 +7203,7 @@ class PaperLibraryPlugin extends Plugin {
     const sizes = await this.getNativePdfPageSizes(file);
     const ownAnnotationIds = await this.getNativePdfOwnAnnotationIds(file).catch(() => new Map());
     if (!sizes || !container.isConnected) return;
+    this.hideOwnNativePdfAnnotations(container, ownAnnotationIds);
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       const dims = sizes.get(pageNumber);
@@ -7215,7 +7216,6 @@ class PaperLibraryPlugin extends Plugin {
       const signature = `svg1|${marks.map((mark) => `${mark.id}:${mark.color}`).join("|")}`;
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
       if (!force && existing?.dataset.signature === signature) {
-        this.hideOwnNativePdfAnnotations(pageEl, ownAnnotationIds.get(pageNumber));
         return;
       }
       const layer = existing || this.ensureNativePdfHighlightLayer(pageEl);
@@ -7246,7 +7246,6 @@ class PaperLibraryPlugin extends Plugin {
         pathEl.setAttribute("fill", color.value);
         layer.appendChild(pathEl);
       });
-      this.hideOwnNativePdfAnnotations(pageEl, ownAnnotationIds.get(pageNumber));
     });
   }
 
@@ -7292,13 +7291,19 @@ class PaperLibraryPlugin extends Plugin {
     return promise;
   }
 
-  hideOwnNativePdfAnnotations(pageEl, ids) {
+  hideOwnNativePdfAnnotations(container, idsByPage) {
     // 写回后 PDF 注释层会渲染我们写入的内嵌高亮，与覆盖层叠加导致变深且不均匀。
-    // 按注释 id 精确隐藏这些元素，显示统一交给覆盖层；链接等其他注释不受影响。
-    const elements = pageEl.querySelectorAll?.(".annotationLayer [data-annotation-id]") || [];
+    // 注释层不一定位于 .page 元素内部（Obsidian 的视图结构与 pdf.js 默认不同），
+    // 因此在视图容器级别按注释 id 全局匹配隐藏；id 全局唯一，无需按页区分。
+    const ids = new Set();
+    for (const set of idsByPage?.values?.() || []) {
+      for (const id of set) ids.add(String(id));
+    }
+    if (!ids.size) return;
+    const elements = container?.querySelectorAll?.("[data-annotation-id]") || [];
     elements.forEach((element) => {
       const id = String(element.dataset?.annotationId || element.getAttribute?.("data-annotation-id") || "");
-      element.classList?.toggle?.("paperlib-native-hidden-annotation", Boolean(id && ids?.has?.(id)));
+      element.classList?.toggle?.("paperlib-native-hidden-annotation", Boolean(id && ids.has(id)));
     });
   }
 
