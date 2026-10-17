@@ -8387,7 +8387,19 @@ class PaperLibraryPlugin extends Plugin {
         const width = pageRect?.width > 0
           ? Math.max(0.02, Math.min(0.9, card.offsetWidth / pageRect.width))
           : (Number(box.width) || 0.3);
-        void this.updatePdfTextBox(paper, mark.id, { box: { x: nextX, y: nextY, width } });
+        if (embedded) card.classList.add("is-embedded");
+        void this.updatePdfTextBox(paper, mark.id, { box: { x: nextX, y: nextY, width } })
+          .then(async () => {
+            // 已写回的文本框拖动后：立刻把注解移到新位置，否则 PDF 里的旧文字会留在原处
+            if (!embedded || this.settings.pdfAnnotationWriteback === "off") return;
+            try {
+              await this.flushPdfAnnotationSyncs((queued) => queued.id === mark.id);
+              await this.refreshNativePdfTextBoxes(paper);
+            } catch (error) {
+              console.error("Paper Library: failed to write dragged text box", error);
+            }
+          })
+          .catch((error) => console.error("Paper Library: failed to update dragged text box", error));
         return;
       }
       enterEdit();
