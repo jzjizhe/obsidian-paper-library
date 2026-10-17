@@ -569,6 +569,20 @@ class PaperLibraryPlugin extends Plugin {
           diagnostics.ownIdsError = String(error?.message || error);
         }
         diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        {
+          const paper = this.getPaperForPdfFile(file);
+          const highlights = paper ? (this.ensureResearchWorkspace(paper).highlights || []) : [];
+          const path = normalizePath(file.path);
+          diagnostics.libraryHighlights = highlights
+            .filter((mark) => normalizePath(mark.pdfPath || paper?.pdfPath || "") === path)
+            .map((mark) => ({
+              id: mark.id,
+              page: mark.page,
+              color: mark.color,
+              rects: (mark.pdfRects || []).map((item) => (item.rect || []).map((value) => Math.round(value))),
+              createdAt: mark.createdAt || ""
+            }));
+        }
         try {
           const buffer = await this.readPdfBinary(file);
           const pdfjs = await loadPdfJs();
