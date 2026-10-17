@@ -621,7 +621,12 @@ class PaperResearchWorkspaceView extends ItemView {
     if (!host?.isConnected || !cache?.pageViews) return;
     const bounds = host.getBoundingClientRect?.();
     const margin = bounds ? Math.max(120, bounds.height * 0.5) : 0;
-    const probe = bounds ? bounds.top + 24 : 0;
+    // 探针与 scrollWorkspacePdfToPage 的对齐点使用同一套缩放换算：
+    // 跳页把页顶对齐到 meta 条下 8px（未缩放坐标），探针取 meta 条下 16px（缩放后坐标），
+    // 保证跳页落点的页即当前页
+    const hostScaleY = bounds && host.offsetHeight ? bounds.height / host.offsetHeight : 1;
+    const metaInset = host.querySelector(".paperlib-canvas-pdf-meta")?.offsetHeight || 0;
+    const probe = bounds ? bounds.top + (metaInset + 16) * hostScaleY : 0;
     let topPage = null;
     for (const record of cache.pageViews.values()) {
       const rect = record.element.getBoundingClientRect?.();
