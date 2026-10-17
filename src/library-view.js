@@ -23,6 +23,7 @@ import {
   normalizeCollectionPath
 } from "./collection-utils.js";
 import { findVenueRankingRule, isRepositoryVenue } from "./venue-rankings.js";
+import { normalizeDoiInput } from "./paper-utils.js";
 import { ConferenceFollowModal } from "./modals/misc.js";
 import { TagModal } from "./modals/paper-form.js";
 import {

@@ -2,7 +2,7 @@
 
 import { Modal, Notice, Setting } from "obsidian";
 import { uniqueId } from "../paper-utils.js";
-import { citationFieldBag, renderCitationTemplate, validateCitationTemplate } from "../citation-engine.js";
+import { citationFieldBag, normalizeCitationAuthorRules, renderCitationTemplate, validateCitationTemplate } from "../citation-engine.js";
 
 class CslImportModal extends Modal {
   constructor(app, plugin, onDone) {

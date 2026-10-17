@@ -4,6 +4,7 @@ import { Modal, Notice, Setting, normalizePath } from "obsidian";
 import { setPaperlibIcon } from "../ui-utils.js";
 import { normalizeDoiInput, normalizePaperTag, normalizePaperTags, uniqueId } from "../paper-utils.js";
 import { expandCollectionPaths, normalizeCollectionPath } from "../collection-utils.js";
+import { normalizeTitleForMatch } from "../metadata-match.js";
 
 class PaperFormModal extends Modal {
   constructor(app, plugin, paper = null, draft = null) {
