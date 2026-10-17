@@ -12364,6 +12364,30 @@ class PaperLibraryPlugin extends Plugin {
         const mergedRects = this.mergePdfHighlightViewportRects(
           mark.pdfRects.map((item) => item.rect).filter((rect) => Array.isArray(rect) && rect.length === 4)
         );
+        // 数学排版（分数、上下标）的文字层矩形常出现又窄又高的离群块，
+        // 合并后表现为竖直窄条。按宽度加权的中位行高裁剪这类块，底部对齐基线。
+        if (mergedRects.length > 1) {
+          const widths = mergedRects.map((rect) => Math.max(0, rect[2] - rect[0]));
+          const totalWidth = widths.reduce((sum, width) => sum + width, 0) || 1;
+          const weighted = mergedRects
+            .map((rect, index) => ({ height: Math.max(0, rect[3] - rect[1]), weight: widths[index] }))
+            .sort((first, second) => first.height - second.height);
+          let accumulated = 0;
+          let medianHeight = weighted[weighted.length - 1]?.height || 0;
+          for (const item of weighted) {
+            accumulated += item.weight;
+            if (accumulated >= totalWidth / 2) { medianHeight = item.height; break; }
+          }
+          if (medianHeight > 0) {
+            mergedRects.forEach((rect, index) => {
+              const width = widths[index];
+              const height = Math.max(0, rect[3] - rect[1]);
+              if (height > medianHeight * 1.8 && width < medianHeight * 2) {
+                rect[1] = Math.max(rect[1], rect[3] - medianHeight * 1.2);
+              }
+            });
+          }
+        }
         values.QuadPoints = mergedRects.flatMap((rect) => [
           Math.min(rect[0], rect[2]), Math.max(rect[1], rect[3]),
           Math.max(rect[0], rect[2]), Math.max(rect[1], rect[3]),
