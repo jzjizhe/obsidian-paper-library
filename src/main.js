@@ -6245,7 +6245,7 @@ class PaperLibraryPlugin extends Plugin {
     this.refreshNativePdfInkOverlays(paper);
     this.refreshNativePdfHighlightOverlays(paper);
     this.refreshNativePdfNoteOverlays(paper);
-    this.refreshNativePdfTextBoxes(paper);
+    void this.refreshNativePdfTextBoxes(paper);
   }
 
   getDesktopPluginPath(relativePath = "") {
@@ -6881,6 +6881,15 @@ class PaperLibraryPlugin extends Plugin {
       const container = leaf.view?.containerEl;
       const toolbar = container?.querySelector?.(".pdf-toolbar");
       if (!container || !toolbar) return;
+      const file = leaf.view?.file;
+      const paper = file ? this.getPaperForPdfFile(file) : null;
+      this.nativePdfEmptyTextBoxCleanup = this.nativePdfEmptyTextBoxCleanup || new Set();
+      if (paper && file?.path && !this.nativePdfEmptyTextBoxCleanup.has(container)) {
+        this.nativePdfEmptyTextBoxCleanup.add(container);
+        void this.cleanupEmptyPdfTextBoxes(paper, file.path).catch((error) => (
+          console.warn("Paper Library: failed to clean empty text boxes", error)
+        ));
+      }
       const existingGroup = container.querySelector(".paperlib-native-pdf-tools");
       if (existingGroup) {
         const existingState = this.nativePdfStates.get(container) || {
@@ -8155,15 +8164,17 @@ class PaperLibraryPlugin extends Plugin {
     }).catch(() => {});
   }
 
-  refreshNativePdfTextBoxes(paper) {
+  async refreshNativePdfTextBoxes(paper) {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !this.app.workspace?.getLeavesOfType) return;
+    const jobs = [];
     this.app.workspace.getLeavesOfType("pdf").forEach((leaf) => {
       const file = leaf.view?.file;
       const container = leaf.view?.containerEl;
       if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
-      void this.renderNativePdfTextBoxes(leaf, container, true).catch((error) => console.error("Paper Library: failed to render text boxes", error));
+      jobs.push(this.renderNativePdfTextBoxes(leaf, container, true));
     });
+    await Promise.all(jobs);
   }
 
   appendPdfTextBoxCard(layer, mark, paper, pageEl, scale = 1) {
@@ -8359,8 +8370,8 @@ class PaperLibraryPlugin extends Plugin {
     paper.annotations = Array.isArray(paper.annotations) ? paper.annotations : [];
     paper.annotations.push(mark);
     await this.saveSettings();
-    await this.syncLocalPdfAnnotation(mark);
-    this.refreshNativePdfTextBoxes(paper);
+    // 空文本框先不写回 PDF，等用户输入内容后由 updatePdfTextBox 触发
+    await this.refreshNativePdfTextBoxes(paper);
     const content = this.app.workspace.getLeavesOfType?.("pdf")?.find((leaf) => leaf.view?.file?.path === file.path)
       ?.view?.containerEl?.querySelector?.(`.paperlib-pdf-textbox-card[data-mark-id="${id}"] .paperlib-pdf-textbox-content`);
     if (content) {
@@ -8389,7 +8400,7 @@ class PaperLibraryPlugin extends Plugin {
     await this.saveSettings();
     await this.syncLocalPdfAnnotation(mark);
     await this.upsertPdfTextBoxNoteEntry(paper, mark);
-    this.refreshNativePdfTextBoxes(paper);
+    await this.refreshNativePdfTextBoxes(paper);
     return true;
   }
 
@@ -8398,7 +8409,37 @@ class PaperLibraryPlugin extends Plugin {
     if (!paper || !mark) return;
     await this.deletePdfMark(paper, { record: mark, source: "paper-annotation" });
     await this.removePdfTextBoxNoteEntry(paper, mark);
-    this.refreshNativePdfTextBoxes(paper);
+    await this.refreshNativePdfTextBoxes(paper);
+  }
+
+  async cleanupEmptyPdfTextBoxes(paper, pdfPath = paper?.pdfPath) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return 0;
+    const path = normalizePath(pdfPath || paper.pdfPath || "");
+    const empties = (paper.annotations || []).filter((mark) => (
+      mark.pdfSubtype === "FreeText"
+      && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+      && !String(mark.comment || "").trim()
+    ));
+    if (!empties.length) return 0;
+    const ids = new Set(empties.map((mark) => mark.id));
+    paper.annotations = (paper.annotations || []).filter((mark) => !ids.has(mark.id));
+    await this.saveSettings();
+    for (const mark of empties) {
+      try {
+        await this.removePdfTextBoxNoteEntry(paper, mark);
+      } catch (error) {
+        // 空文本框通常没有笔记条目，失败不影响清理
+      }
+    }
+    try {
+      await this.removeLocalPdfAnnotations(empties);
+    } catch (error) {
+      console.warn("Paper Library: failed to remove empty text box annotations", error);
+    }
+    await this.refreshNativePdfTextBoxes(paper);
+    new Notice(`已清理 ${empties.length} 个空文本框`);
+    return empties.length;
   }
 
   async upsertPdfTextBoxNoteEntry(paper, mark) {
@@ -9353,7 +9394,7 @@ class PaperLibraryPlugin extends Plugin {
     }
     this.refreshResearchPdfHighlights(paper);
     this.refreshNativePdfNoteOverlays(paper);
-    this.refreshNativePdfTextBoxes(paper);
+    await this.refreshNativePdfTextBoxes(paper);
     this.refreshNativePdfShapeOverlays(paper);
     this.refreshNativePdfInkOverlays(paper);
     this.refreshViews();
@@ -13556,6 +13597,7 @@ class PaperLibraryPlugin extends Plugin {
 
   async upsertLocalPdfAnnotation(mark) {
     if (!mark?.pdfPath) return false;
+    if (mark.pdfSubtype === "FreeText" && !String(mark.comment || mark.text || "").trim()) return true;
     if (mark.pdfSubtype !== "FreeText" && (!Array.isArray(mark.pdfRects) || !mark.pdfRects.length)) return false;
     return this.mutateLocalPdf(mark.pdfPath, async (document) => this.writeLocalPdfAnnotation(document, mark));
   }
@@ -13572,6 +13614,7 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   writeLocalPdfAnnotation(document, mark) {
+    if (mark?.pdfSubtype === "FreeText" && !String(mark.comment || mark.text || "").trim()) return false;
     {
       const page = document.getPage(Math.max(0, Number(mark.page || 1) - 1));
       if (!page) throw new Error("PDF 页码不存在");
@@ -13721,6 +13764,8 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async syncLocalPdfAnnotation(mark) {
+    // 空文本框不写回：否则 PDF 阅读器只能显示 /Contents 的兜底文字
+    if (mark?.pdfSubtype === "FreeText" && !String(mark.comment || "").trim()) return true;
     const mode = ["on-leave", "immediate", "off"].includes(this.settings.pdfAnnotationWriteback)
       ? this.settings.pdfAnnotationWriteback
       : "on-leave";

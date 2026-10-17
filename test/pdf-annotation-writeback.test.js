@@ -66,6 +66,20 @@ async function run() {
   assert.equal(updated.size(), 1, "rewriting the same mark must replace the old annotation");
   assert.match(document.context.lookup(updated.get(0)).toString(), /\/Subtype \/FreeText/);
 
+  // 空文本框不写入 PDF，避免阅读器显示 “Paper Library annotation” 兜底文字
+  const emptyDocument = await PDFDocument.create();
+  emptyDocument.addPage([504, 720]);
+  assert.equal(
+    plugin.writeLocalPdfAnnotation(emptyDocument, { ...mark, comment: "" }),
+    false,
+    "an empty text box must not be written to the PDF"
+  );
+  assert.equal(
+    emptyDocument.getPage(0).node.lookupMaybe(PDFName.of("Annots"), PDFArray),
+    undefined,
+    "an empty text box must not create an annotation"
+  );
+
   console.log("PDF annotation writeback tests passed.");
 }
 
