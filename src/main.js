@@ -418,7 +418,7 @@ class PaperLibraryPlugin extends Plugin {
     this.addCommand({
       id: "flush-pdf-annotation-writeback",
       name: "立即把论文批注写回 PDF 文件",
-      hotkeys: [{ modifiers: ["Mod"], key: "s" }],
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "s" }],
       callback: () => { void this.flushPdfAnnotationSyncs(null, true); }
     });
     this.addCommand({ id: "import-active-note", name: "Import current note as paper", callback: () => this.importActiveNote() });

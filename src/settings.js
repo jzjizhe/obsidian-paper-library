@@ -727,7 +727,7 @@ class PaperLibrarySettingTab extends PluginSettingTab {
         }));
     new Setting(containerEl)
       .setName("批注写回 PDF 文件")
-      .setDesc("写回后批注在外部 PDF 阅读器中可见。即时写回会让正在阅读的原生 PDF 视图重载（闪烁一下）；离开视图时写回则完全无感，也可随时用命令/Cmd+S 手动写回。")
+      .setDesc("写回后批注在外部 PDF 阅读器中可见。即时写回会让正在阅读的原生 PDF 视图重载（闪烁一下）；离开视图时写回则完全无感，也可随时用命令/Cmd+Shift+S 手动写回。")
       .addDropdown((dropdown) => dropdown
         .addOption("on-leave", "离开视图时写回（推荐）")
         .addOption("immediate", "即时写回")
