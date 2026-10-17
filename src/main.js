@@ -895,7 +895,7 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
     this.nativePdfToolbarObserver?.disconnect();
-    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove }) => {
+    (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove, keyDown, keyDownDoc }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);
       container.removeEventListener("contextmenu", contextMenu, true);
@@ -903,6 +903,7 @@ class PaperLibraryPlugin extends Plugin {
       container.removeEventListener("click", click, true);
       container.removeEventListener("scroll", scroll, true);
       container.removeEventListener("pointermove", pointerMove, true);
+      if (keyDown) (keyDownDoc || container.ownerDocument || document)?.removeEventListener?.("keydown", keyDown, true);
     });
     this.persistPaperReadingPositions();
     this.nativePdfBindingList = [];
@@ -7303,7 +7304,22 @@ class PaperLibraryPlugin extends Plugin {
           }
         };
         container.addEventListener("pointermove", pointerMove, true);
-        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove };
+        // Esc 始终回到鼠标工具；文档级捕获保证页面、工具栏、文本框编辑里都能触发
+        const keyDownDoc = container.ownerDocument || document;
+        const keyDown = (event) => {
+          if (event.key !== "Escape" || event.isComposing) return;
+          const activeLeaf = this.app.workspace.activeLeaf;
+          if (activeLeaf && activeLeaf !== leaf) return;
+          if (!activeLeaf && !container.contains(event.target)) return;
+          const active = this.nativePdfStates.get(container);
+          if (!active || (!active.mode && !active.paletteOpen)) return;
+          active.mode = "";
+          active.paletteOpen = false;
+          active.erasing = null;
+          this.updateNativePdfToolbarState(container, group, active);
+        };
+        keyDownDoc.addEventListener("keydown", keyDown, true);
+        const binding = { container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove, keyDown, keyDownDoc };
         this.nativePdfBindings.set(container, binding);
         this.nativePdfBindingList.push(binding);
       }
