@@ -14681,8 +14681,9 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 
 .paperlib-native-pdf-size-row {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 3px;
   color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
