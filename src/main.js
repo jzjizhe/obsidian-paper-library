@@ -7187,22 +7187,31 @@ class PaperLibraryPlugin extends Plugin {
           if (active?.mode === "textbox") {
             const file = leaf.view?.file || this.app.workspace.getActiveFile();
             const paper = file ? this.getPaperForPdfFile(file) : null;
-            if (pageEl && paper && container.contains(pageEl)) {
-              event.preventDefault();
-              event.stopPropagation();
-              const bounds = pageEl.getBoundingClientRect();
-              if (bounds.width > 0 && bounds.height > 0) {
-                const box = {
-                  x: Math.max(0, Math.min(0.94, (event.clientX - bounds.left) / bounds.width)),
-                  y: Math.max(0, Math.min(0.97, (event.clientY - bounds.top) / bounds.height)),
-                  width: 0.32
-                };
-                const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
-                void this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize, state.textboxColor);
-                state.paletteOpen = false;
-                this.updateNativePdfToolbarState(container, group, state);
-              }
+            if (!pageEl || !container.contains(pageEl)) {
+              new Notice("请点击 PDF 页面内部插入文本框");
+              return;
             }
+            if (!paper) {
+              new Notice("请先把这个文档加入论文库");
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const bounds = pageEl.getBoundingClientRect();
+            if (!(bounds.width > 0 && bounds.height > 0)) return;
+            const box = {
+              x: Math.max(0, Math.min(0.94, (event.clientX - bounds.left) / bounds.width)),
+              y: Math.max(0, Math.min(0.97, (event.clientY - bounds.top) / bounds.height)),
+              width: 0.32
+            };
+            const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+            this.createPdfTextBox(paper, file, pageNumber, box, state.textboxFontSize, state.textboxColor)
+              .catch((error) => {
+                console.error("Paper Library: failed to insert text box", error);
+                new Notice(`插入文本框失败：${error?.message || error}`);
+              });
+            state.paletteOpen = false;
+            this.updateNativePdfToolbarState(container, group, state);
             return;
           }
           if (active?.mode === "eraser") {
