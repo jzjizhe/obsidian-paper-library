@@ -7331,13 +7331,14 @@ class PaperLibraryPlugin extends Plugin {
         event.preventDefault();
         event.stopPropagation();
         if (!toolbar.isConnected) return;
-        this.dismissNativePdfSelectionToolbar();
-        selection.removeAllRanges();
         try {
+          // 先算选区上下文（依赖当前 selection），再清除选区和弹条
           const context = await this.getNativePdfSelectionContext(leaf, textLayer);
+          this.dismissNativePdfSelectionToolbar();
+          selection.removeAllRanges();
           if (context?.text) await this.saveCanvasHighlight(context, color.id);
-          else new Notice("请先把这个文档加入论文库");
         } catch (error) {
+          this.dismissNativePdfSelectionToolbar();
           console.error("Paper Library: failed to highlight PDF selection", error);
           new Notice(`高亮失败：${error.message || error}`);
         }
