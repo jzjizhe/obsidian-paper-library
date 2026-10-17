@@ -340,7 +340,7 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfMutationQueues = new Map();
     this.pendingPdfAnnotationSyncs = new Map();
     this.nativePdfPageSizeCache = new Map();
-    this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
+    this.nativeOwnAnnotationIdsCache = { key: "", annotations: Promise.resolve(new Map()) };
     this.nativeOverlayHidden = false;
     this.nativeEmbeddedHidden = false;
     this.nativeAnnotationLayersHidden = false;
@@ -423,6 +423,50 @@ class PaperLibraryPlugin extends Plugin {
       }
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
+    this.addCommand({
+      id: "merge-overlapping-highlights",
+      name: "合并重叠的重复标注",
+      callback: async () => {
+        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+        const active = this.app.workspace.activeLeaf;
+        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+        const file = leaf?.view?.file;
+        const paper = file ? this.getPaperForPdfFile(file) : null;
+        if (!file || !paper) {
+          new Notice("请先打开一篇已加入论文库的 PDF");
+          return;
+        }
+        const path = normalizePath(file.path);
+        const marks = (this.ensureResearchWorkspace(paper).highlights || [])
+          .filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path)
+          .sort((first, second) => String(first.createdAt || "").localeCompare(String(second.createdAt || "")));
+        const kept = [];
+        const duplicates = [];
+        for (const mark of marks) {
+          const union = this.getPdfRectsUnion(mark.pdfRects);
+          if (!union) { kept.push(mark); continue; }
+          const overlap = kept.find((other) => {
+            if (Number(other.page) !== Number(mark.page)) return false;
+            const otherUnion = this.getPdfRectsUnion(other.pdfRects);
+            return otherUnion ? this.pdfRectsOverlapRatio(union, otherUnion) >= 0.9 : false;
+          });
+          if (overlap) duplicates.push(mark);
+          else kept.push(mark);
+        }
+        if (!duplicates.length) {
+          new Notice("没有发现重叠的重复标注");
+          return;
+        }
+        for (const mark of duplicates) {
+          try {
+            await this.removeCanvasHighlights(paper, [mark.id]);
+          } catch (error) {
+            console.error("Paper Library: failed to remove duplicate highlight", error);
+          }
+        }
+        new Notice(`已合并 ${duplicates.length} 条重叠标注（保留最新的一条），请确认效果`);
+      }
+    });
     this.addCommand({
       id: "rewrite-pdf-annotations",
       name: "重写 PDF 内嵌批注（去除外观流）",
@@ -564,11 +608,11 @@ class PaperLibraryPlugin extends Plugin {
         };
         let ownIds = new Map();
         try {
-          ownIds = await this.getNativePdfOwnAnnotationIds(file);
+          ownIds = await this.getNativePdfOwnAnnotations(file);
         } catch (error) {
           diagnostics.ownIdsError = String(error?.message || error);
         }
-        diagnostics.ownIds = [...ownIds.entries()].map(([page, ids]) => [page, [...ids]]);
+        diagnostics.ownIds = [...ownIds.entries()].map(([page, list]) => [page, list.map((annotation) => annotation.id)]);
         {
           const paper = this.getPaperForPdfFile(file);
           const highlights = paper ? (this.ensureResearchWorkspace(paper).highlights || []) : [];
@@ -613,7 +657,7 @@ class PaperLibraryPlugin extends Plugin {
         }
         {
           const allOwn = new Set();
-          for (const ids of ownIds.values()) for (const id of ids) allOwn.add(String(id));
+          for (const list of ownIds.values()) for (const annotation of list) allOwn.add(String(annotation.id));
           diagnostics.ownDomHits = [...container.querySelectorAll("[data-annotation-id]")]
             .map((el) => ({
               id: el.getAttribute("data-annotation-id"),
@@ -7352,18 +7396,26 @@ class PaperLibraryPlugin extends Plugin {
     const path = normalizePath(file.path);
     const workspace = this.ensureResearchWorkspace(paper);
     const sizes = await this.getNativePdfPageSizes(file);
-    const ownAnnotationIds = await this.getNativePdfOwnAnnotationIds(file).catch(() => new Map());
+    const ownAnnotations = await this.getNativePdfOwnAnnotations(file).catch(() => new Map());
     if (!sizes || !container.isConnected) return;
-    this.hideOwnNativePdfAnnotations(container, ownAnnotationIds);
+    this.hideOwnNativePdfAnnotations(container, ownAnnotations);
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
       const dims = sizes.get(pageNumber);
       if (!pageNumber || !dims?.width || !dims?.height) return;
+      const pageAnnotations = ownAnnotations.get(Number(pageNumber)) || [];
       const marks = (workspace.highlights || []).filter((mark) => (
         normalizePath(mark.pdfPath || paper.pdfPath || "") === path
           && Number(mark.page) === pageNumber
           && Array.isArray(mark.pdfRects) && mark.pdfRects.length
-      ));
+      )).filter((mark) => {
+        // 已写进文件的标注由 Obsidian 画在页面画布上；若仍有待写回变更（改色等）则继续用覆盖层
+        const key = `${mark.pdfPath || paper.pdfPath || ""}|${mark.pdfAnnotationId || mark.id}`;
+        if (this.pendingPdfAnnotationSyncs.has(key)) return true;
+        const box = this.getPdfRectsUnion(mark.pdfRects);
+        if (!box) return true;
+        return !pageAnnotations.some((annotation) => this.pdfRectsClose(annotation.rect, box));
+      });
       const signature = `svg1|${marks.map((mark) => `${mark.id}:${mark.color}`).join("|")}`;
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
       if (!force && existing?.dataset.signature === signature) {
@@ -7400,9 +7452,10 @@ class PaperLibraryPlugin extends Plugin {
     });
   }
 
-  async getNativePdfOwnAnnotationIds(file) {
-    // 返回 Map<pageNumber, Set<annotationId>>：标题为 "Paper Library" 的注释即我们写入的。
-    // pdf.js 的 data-annotation-id 就是 getAnnotations() 里的 id，因此可精确映射到 DOM 元素。
+  async getNativePdfOwnAnnotations(file) {
+    // 返回 Map<pageNumber, Array<{ id, rect }>>：标题为 "Paper Library" 的注释即我们写入的。
+    // Obsidian 的 PDF 查看器会把内嵌注释直接渲染进页面画布（DOM 无法隐藏），
+    // 因此这里既用于隐藏 DOM 注释层，也用于避免覆盖层重复绘制。
     // 按文件路径 + mtime/size 缓存；写回修改文件后自动失效重读。
     if (!file?.path) return new Map();
     let stat = null;
@@ -7413,42 +7466,72 @@ class PaperLibraryPlugin extends Plugin {
     }
     const key = `${file.path}|${stat?.mtime || 0}|${stat?.size || 0}`;
     const cached = this.nativeOwnAnnotationIdsCache;
-    if (cached.key === key) return cached.ids;
+    if (cached.key === key) return cached.annotations;
     const promise = (async () => {
       const buffer = await this.readPdfBinary(file);
       const pdfjs = await loadPdfJs();
       const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
       try {
-        const ids = new Map();
+        const annotations = new Map();
         for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
           const page = await document.getPage(pageNumber);
-          const annotations = await page.getAnnotations();
-          const own = new Set((annotations || [])
+          const items = await page.getAnnotations();
+          const own = (items || [])
             .filter((annotation) => String(annotation?.titleObj?.str || annotation?.title || "") === "Paper Library")
-            .map((annotation) => String(annotation.id)));
-          if (own.size) ids.set(pageNumber, own);
+            .map((annotation) => ({
+              id: String(annotation.id),
+              rect: Array.isArray(annotation.rect) ? annotation.rect.map((value) => Number(value) || 0) : []
+            }));
+          if (own.length) annotations.set(pageNumber, own);
         }
-        return ids;
+        return annotations;
       } finally {
         await document.destroy?.();
       }
     })();
-    this.nativeOwnAnnotationIdsCache = { key, ids: promise };
+    this.nativeOwnAnnotationIdsCache = { key, annotations: promise };
     promise.catch(() => {
-      if (this.nativeOwnAnnotationIdsCache.ids === promise) {
-        this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
+      if (this.nativeOwnAnnotationIdsCache.annotations === promise) {
+        this.nativeOwnAnnotationIdsCache = { key: "", annotations: Promise.resolve(new Map()) };
       }
     });
     return promise;
   }
 
-  hideOwnNativePdfAnnotations(container, idsByPage) {
+  pdfRectsOverlapRatio(first, second) {
+    const width = Math.min(first[2], second[2]) - Math.max(first[0], second[0]);
+    const height = Math.min(first[3], second[3]) - Math.max(first[1], second[1]);
+    if (width <= 0 || height <= 0) return 0;
+    const intersection = width * height;
+    const areaFirst = Math.max(0, first[2] - first[0]) * Math.max(0, first[3] - first[1]);
+    const areaSecond = Math.max(0, second[2] - second[0]) * Math.max(0, second[3] - second[1]);
+    const smaller = Math.min(areaFirst, areaSecond);
+    return smaller > 0 ? intersection / smaller : 0;
+  }
+
+  getPdfRectsUnion(pdfRects) {
+    const rects = (pdfRects || []).map((item) => item?.rect).filter((rect) => Array.isArray(rect) && rect.length === 4);
+    if (!rects.length) return null;
+    return [
+      Math.min(...rects.map((rect) => Math.min(rect[0], rect[2]))),
+      Math.min(...rects.map((rect) => Math.min(rect[1], rect[3]))),
+      Math.max(...rects.map((rect) => Math.max(rect[0], rect[2]))),
+      Math.max(...rects.map((rect) => Math.max(rect[1], rect[3])))
+    ];
+  }
+
+  pdfRectsClose(first, second, tolerance = 3) {
+    if (!Array.isArray(first) || first.length !== 4 || !Array.isArray(second) || second.length !== 4) return false;
+    return first.every((value, index) => Math.abs(Number(value) - Number(second[index])) <= tolerance);
+  }
+
+  hideOwnNativePdfAnnotations(container, annotationsByPage) {
     // 写回后 PDF 注释层会渲染我们写入的内嵌高亮，与覆盖层叠加导致变深且不均匀。
     // 注释层不一定位于 .page 元素内部（Obsidian 的视图结构与 pdf.js 默认不同），
     // 因此在视图容器级别按注释 id 全局匹配隐藏；id 全局唯一，无需按页区分。
     const ids = new Set();
-    for (const set of idsByPage?.values?.() || []) {
-      for (const id of set) ids.add(String(id));
+    for (const list of annotationsByPage?.values?.() || []) {
+      for (const annotation of list) ids.add(String(annotation.id));
     }
     if (!ids.size) return;
     const elements = container?.querySelectorAll?.("[data-annotation-id]") || [];
@@ -12505,12 +12588,18 @@ class PaperLibraryPlugin extends Plugin {
     const pdfPath = context.pdfPath || paper.pdfPath;
     const normalizedColor = CANVAS_HIGHLIGHT_COLORS.some((color) => color.id === colorId) ? colorId : "yellow";
     const selectionValue = [range.beginIndex, range.beginOffset, range.endIndex, range.endOffset].join(",");
-    const existing = workspace.highlights.find((highlight) => (
-      normalizePath(highlight.pdfPath || paper.pdfPath) === normalizePath(pdfPath)
-      && Number(highlight.page) === Number(page)
-      && [highlight.selection?.beginIndex, highlight.selection?.beginOffset,
-        highlight.selection?.endIndex, highlight.selection?.endOffset].join(",") === selectionValue
-    ));
+    const selectionUnion = this.getPdfRectsUnion(context.pdfRects);
+    const existing = workspace.highlights.find((highlight) => {
+      if (normalizePath(highlight.pdfPath || paper.pdfPath) !== normalizePath(pdfPath)) return false;
+      if (Number(highlight.page) !== Number(page)) return false;
+      const sameSelection = [highlight.selection?.beginIndex, highlight.selection?.beginOffset,
+        highlight.selection?.endIndex, highlight.selection?.endOffset].join(",") === selectionValue;
+      if (sameSelection) return true;
+      // 选区索引可能因文字层差异而不稳定：几何高度重叠视为同一处标注，更新颜色而非新建
+      const otherUnion = this.getPdfRectsUnion(highlight.pdfRects);
+      if (!selectionUnion || !otherUnion) return false;
+      return this.pdfRectsOverlapRatio(selectionUnion, otherUnion) >= 0.9;
+    });
     const target = `${pdfPath}#page=${page}&selection=${selectionValue}&color=${normalizedColor}`;
     if (existing) {
       if (existing.color === normalizedColor) return false;
