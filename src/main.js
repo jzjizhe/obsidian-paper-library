@@ -340,6 +340,7 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfMutationQueues = new Map();
     this.pendingPdfAnnotationSyncs = new Map();
     this.nativePdfPageSizeCache = new Map();
+    this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
     this.nativeSelectionToolbarCleanup = null;
     this.paperReadingPositions = new Map();
     this.paperReadingPositionTimer = null;
@@ -7089,6 +7090,7 @@ class PaperLibraryPlugin extends Plugin {
     const path = normalizePath(file.path);
     const workspace = this.ensureResearchWorkspace(paper);
     const sizes = await this.getNativePdfPageSizes(file);
+    const ownAnnotationIds = await this.getNativePdfOwnAnnotationIds(file).catch(() => new Map());
     if (!sizes || !container.isConnected) return;
     container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
       const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
@@ -7102,7 +7104,7 @@ class PaperLibraryPlugin extends Plugin {
       const signature = `svg1|${marks.map((mark) => `${mark.id}:${mark.color}`).join("|")}`;
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
       if (!force && existing?.dataset.signature === signature) {
-        this.hideDuplicateNativePdfAnnotations(pageEl, marks, dims);
+        this.hideOwnNativePdfAnnotations(pageEl, ownAnnotationIds.get(pageNumber));
         return;
       }
       const layer = existing || this.ensureNativePdfHighlightLayer(pageEl);
@@ -7133,48 +7135,59 @@ class PaperLibraryPlugin extends Plugin {
         pathEl.setAttribute("fill", color.value);
         layer.appendChild(pathEl);
       });
-      this.hideDuplicateNativePdfAnnotations(pageEl, marks, dims);
+      this.hideOwnNativePdfAnnotations(pageEl, ownAnnotationIds.get(pageNumber));
     });
   }
 
-  hideDuplicateNativePdfAnnotations(pageEl, marks, dims) {
-    // 写回后 PDF 注释层会渲染我们写入的内嵌高亮，与覆盖层叠加导致颜色变深且不均匀。
-    // pdf.js 的 data-annotation-id 是对象引用而非写入的 NM，无法按 id 匹配；
-    // 这里按几何位置识别：注释层中与库内高亮矩形重合的 highlight 注释隐藏，
-    // 显示统一由覆盖层负责。只处理 highlight，避免误伤链接等注释。
-    const sections = pageEl.querySelectorAll?.(".annotationLayer section") || [];
-    if (!sections.length) return;
-    const pageRect = pageEl.getBoundingClientRect?.();
-    if (!pageRect?.width || !pageRect?.height) return;
-    const boxes = [];
-    (marks || []).forEach((mark) => {
-      (mark.pdfRects || []).forEach((item) => {
-        const rect = item?.rect;
-        if (!Array.isArray(rect) || rect.length !== 4) return;
-        boxes.push({
-          left: Math.min(rect[0], rect[2]) / dims.width * pageRect.width,
-          right: Math.max(rect[0], rect[2]) / dims.width * pageRect.width,
-          top: (1 - Math.max(rect[1], rect[3]) / dims.height) * pageRect.height,
-          bottom: (1 - Math.min(rect[1], rect[3]) / dims.height) * pageRect.height
-        });
-      });
-    });
-    sections.forEach((section) => {
-      section.classList?.remove?.("paperlib-native-hidden-annotation");
-      if (!boxes.length) return;
-      if (!/highlight/i.test(section.className || "")) return;
-      const rect = section.getBoundingClientRect?.();
-      if (!rect?.width || !rect?.height) return;
-      // 与库内高亮矩形的重叠面积达到自身一半以上，视为同一条内嵌高亮
-      let coveredArea = 0;
-      boxes.forEach((box) => {
-        const width = Math.min(rect.right, pageRect.left + box.right) - Math.max(rect.left, pageRect.left + box.left);
-        const height = Math.min(rect.bottom, pageRect.top + box.bottom) - Math.max(rect.top, pageRect.top + box.top);
-        if (width > 0 && height > 0) coveredArea += width * height;
-      });
-      if (coveredArea >= rect.width * rect.height * 0.5) {
-        section.classList?.add?.("paperlib-native-hidden-annotation");
+  async getNativePdfOwnAnnotationIds(file) {
+    // 返回 Map<pageNumber, Set<annotationId>>：标题为 "Paper Library" 的注释即我们写入的。
+    // pdf.js 的 data-annotation-id 就是 getAnnotations() 里的 id，因此可精确映射到 DOM 元素。
+    // 按文件路径 + mtime/size 缓存；写回修改文件后自动失效重读。
+    if (!file?.path) return new Map();
+    let stat = null;
+    try {
+      stat = await this.app.vault.adapter?.stat?.(file.path);
+    } catch (error) {
+      stat = null;
+    }
+    const key = `${file.path}|${stat?.mtime || 0}|${stat?.size || 0}`;
+    const cached = this.nativeOwnAnnotationIdsCache;
+    if (cached.key === key) return cached.ids;
+    const promise = (async () => {
+      const buffer = await this.readPdfBinary(file);
+      const pdfjs = await loadPdfJs();
+      const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+      try {
+        const ids = new Map();
+        for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
+          const page = await document.getPage(pageNumber);
+          const annotations = await page.getAnnotations();
+          const own = new Set((annotations || [])
+            .filter((annotation) => String(annotation?.titleObj?.str || annotation?.title || "") === "Paper Library")
+            .map((annotation) => String(annotation.id)));
+          if (own.size) ids.set(pageNumber, own);
+        }
+        return ids;
+      } finally {
+        await document.destroy?.();
       }
+    })();
+    this.nativeOwnAnnotationIdsCache = { key, ids: promise };
+    promise.catch(() => {
+      if (this.nativeOwnAnnotationIdsCache.ids === promise) {
+        this.nativeOwnAnnotationIdsCache = { key: "", ids: Promise.resolve(new Map()) };
+      }
+    });
+    return promise;
+  }
+
+  hideOwnNativePdfAnnotations(pageEl, ids) {
+    // 写回后 PDF 注释层会渲染我们写入的内嵌高亮，与覆盖层叠加导致变深且不均匀。
+    // 按注释 id 精确隐藏这些元素，显示统一交给覆盖层；链接等其他注释不受影响。
+    const elements = pageEl.querySelectorAll?.(".annotationLayer [data-annotation-id]") || [];
+    elements.forEach((element) => {
+      const id = String(element.dataset?.annotationId || element.getAttribute?.("data-annotation-id") || "");
+      element.classList?.toggle?.("paperlib-native-hidden-annotation", Boolean(id && ids?.has?.(id)));
     });
   }
 
