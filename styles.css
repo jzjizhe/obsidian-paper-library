@@ -9285,7 +9285,7 @@ button.paperlib-file-open {
   height: min(88vh, 880px);
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--color-purple, #a855f7);
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
   border-radius: 20px;
   box-shadow: 0 32px 90px rgb(0 0 0 / 26%);
 }
@@ -14816,7 +14816,7 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   min-width: 10px;
   min-height: 16px;
   padding: 1px 3px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
+  border: 1px solid var(--color-purple, #a855f7);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.72);
   background: color-mix(in srgb, var(--background-primary) 72%, transparent);
