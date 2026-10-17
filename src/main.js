@@ -6219,6 +6219,7 @@ class PaperLibraryPlugin extends Plugin {
     this.refreshNativePdfInkOverlays(paper);
     this.refreshNativePdfHighlightOverlays(paper);
     this.refreshNativePdfNoteOverlays(paper);
+    this.refreshNativePdfTextBoxes(paper);
   }
 
   getDesktopPluginPath(relativePath = "") {
@@ -6865,6 +6866,7 @@ class PaperLibraryPlugin extends Plugin {
         this.renderNativePdfInkOverlays(leaf, container);
         void this.renderNativePdfHighlightOverlays(leaf, container);
         void this.renderNativePdfNoteOverlays(leaf, container);
+        this.renderNativePdfTextBoxes(leaf, container);
         this.ensureNativePdfFigureDragZones(leaf, container, existingState);
         return;
       }
@@ -7024,7 +7026,7 @@ class PaperLibraryPlugin extends Plugin {
         )).length;
         const annotationCount = (paper.annotations || []).filter((mark) => (
           normalizePath(mark.pdfPath || paper.pdfPath || "") === path
-          && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+          && (mark.pdfSubtype === "FreeText" ? Boolean(mark.box) : Array.isArray(mark.pdfRects) && mark.pdfRects.length)
         )).length;
         const total = highlightCount + annotationCount;
         if (!total) return new Notice("本文没有标注");
@@ -7068,6 +7070,19 @@ class PaperLibraryPlugin extends Plugin {
         state.paletteOpen = false;
         this.updateNativePdfToolbarState(container, group, state);
       });
+      const textbox = document.createElement("button");
+      textbox.className = "clickable-icon paperlib-native-pdf-tool is-textbox";
+      textbox.title = "文本框：点击页面任意位置插入";
+      textbox.setAttribute("aria-label", "插入文本框");
+      setPaperlibIcon(textbox, "square-pen");
+      group.appendChild(textbox);
+      textbox.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        state.mode = state.mode === "textbox" ? "" : "textbox";
+        state.paletteOpen = false;
+        this.updateNativePdfToolbarState(container, group, state);
+      });
       askRegion.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -7087,6 +7102,7 @@ class PaperLibraryPlugin extends Plugin {
       this.renderNativePdfInkOverlays(leaf, container, true);
       void this.renderNativePdfHighlightOverlays(leaf, container, true);
       void this.renderNativePdfNoteOverlays(leaf, container, true);
+      this.renderNativePdfTextBoxes(leaf, container, true);
       this.ensureNativePdfFigureDragZones(leaf, container, state);
       if (!this.nativePdfBindings.has(container)) {
         const pointerDown = (event) => {
@@ -7110,6 +7126,25 @@ class PaperLibraryPlugin extends Plugin {
               stroke,
               title: paper.title || file.basename || file.name
             });
+            return;
+          }
+          if (active?.mode === "textbox") {
+            const file = leaf.view?.file || this.app.workspace.getActiveFile();
+            const paper = file ? this.getPaperForPdfFile(file) : null;
+            if (pageEl && paper && container.contains(pageEl)) {
+              event.preventDefault();
+              event.stopPropagation();
+              const bounds = pageEl.getBoundingClientRect();
+              if (bounds.width > 0 && bounds.height > 0) {
+                const box = {
+                  x: Math.max(0, Math.min(0.94, (event.clientX - bounds.left) / bounds.width)),
+                  y: Math.max(0, Math.min(0.97, (event.clientY - bounds.top) / bounds.height)),
+                  width: 0.32
+                };
+                const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+                void this.createPdfTextBox(paper, file, pageNumber, box);
+              }
+            }
             return;
           }
           if (active?.mode === "eraser") {
@@ -7754,6 +7789,248 @@ class PaperLibraryPlugin extends Plugin {
     layer.appendChild(popup);
   }
 
+  renderNativePdfTextBoxes(leaf, container, force = false) {
+    const file = leaf?.view?.file || this.app.workspace.getActiveFile();
+    const paper = this.getPaperForPdfFile(file);
+    if (!file?.path || !paper) {
+      container?.querySelectorAll?.(".paperlib-native-pdf-textbox-layer")?.forEach?.((element) => element.remove());
+      return;
+    }
+    const path = normalizePath(file.path);
+    const boxes = (paper.annotations || []).filter((mark) => (
+      mark.pdfSubtype === "FreeText"
+      && mark.box
+      && normalizePath(mark.pdfPath || paper.pdfPath || "") === path
+    ));
+    container.querySelectorAll(".page[data-page-number], .page").forEach((pageEl) => {
+      const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
+      if (!pageNumber) return;
+      const pageBoxes = boxes.filter((mark) => Number(mark.page) === pageNumber);
+      const signature = pageBoxes.map((mark) => (
+        `${mark.id}:${Number(mark.box.x).toFixed(4)}:${Number(mark.box.y).toFixed(4)}:${Number(mark.box.width || 0.32).toFixed(4)}:${String(mark.comment || "").length}`
+      )).join("|");
+      let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-textbox-layer");
+      if (!force && layer?.dataset.signature === signature) return;
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "paperlib-native-pdf-textbox-layer";
+        pageEl.appendChild(layer);
+      }
+      layer.replaceChildren();
+      layer.dataset.signature = signature;
+      pageBoxes.forEach((mark) => this.appendPdfTextBoxCard(layer, mark, paper, pageEl));
+    });
+  }
+
+  refreshNativePdfTextBoxes(paper) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !this.app.workspace?.getLeavesOfType) return;
+    this.app.workspace.getLeavesOfType("pdf").forEach((leaf) => {
+      const file = leaf.view?.file;
+      const container = leaf.view?.containerEl;
+      if (!container || this.getPaperForPdfFile(file)?.id !== paper.id) return;
+      this.renderNativePdfTextBoxes(leaf, container, true);
+    });
+  }
+
+  appendPdfTextBoxCard(layer, mark, paper, pageEl) {
+    const box = mark.box || { x: 0.6, y: 0.3, width: 0.32 };
+    const card = document.createElement("div");
+    card.className = "paperlib-pdf-textbox-card";
+    card.dataset.markId = mark.id;
+    card.style.left = `${Math.max(0, Math.min(0.94, Number(box.x) || 0)) * 100}%`;
+    card.style.top = `${Math.max(0, Math.min(0.97, Number(box.y) || 0)) * 100}%`;
+    card.style.width = `${Math.max(0.08, Math.min(1, Number(box.width) || 0.32)) * 100}%`;
+    const header = document.createElement("div");
+    header.className = "paperlib-pdf-textbox-header";
+    const grip = document.createElement("span");
+    grip.className = "paperlib-pdf-textbox-grip";
+    grip.title = "拖动移动";
+    setPaperlibIcon(grip, "grip-vertical");
+    header.appendChild(grip);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "paperlib-pdf-textbox-delete";
+    remove.title = "删除文本框";
+    remove.setAttribute("aria-label", "删除文本框");
+    setPaperlibIcon(remove, "trash-2");
+    header.appendChild(remove);
+    card.appendChild(header);
+    const content = document.createElement("div");
+    content.className = "paperlib-pdf-textbox-content";
+    content.setAttribute("contenteditable", "plaintext-only");
+    content.spellcheck = false;
+    content.textContent = mark.comment || "";
+    card.appendChild(content);
+
+    content.addEventListener("pointerdown", (event) => event.stopPropagation());
+    content.addEventListener("contextmenu", (event) => event.stopPropagation());
+    content.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        content.blur();
+      }
+    });
+    content.addEventListener("blur", () => {
+      const value = content.textContent || "";
+      const trimmed = value.trim();
+      if (!trimmed && !String(mark.comment || "").trim()) {
+        void this.deletePdfTextBox(paper, mark);
+        return;
+      }
+      if (trimmed === String(mark.comment || "").trim()) return;
+      void this.updatePdfTextBox(paper, mark.id, { comment: value });
+    });
+
+    const startDrag = (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      content.blur();
+      const pageRect = pageEl.getBoundingClientRect();
+      if (!pageRect.width || !pageRect.height) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startBox = { ...box, width: Number(box.width) || 0.32 };
+      let moved = false;
+      const move = (moveEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const deltaY = moveEvent.clientY - startY;
+        if (!moved && Math.hypot(deltaX, deltaY) < 3) return;
+        moved = true;
+        const x = Math.max(0, Math.min(1 - startBox.width, startBox.x + deltaX / pageRect.width));
+        const y = Math.max(0, Math.min(0.97, startBox.y + deltaY / pageRect.height));
+        card.style.left = `${x * 100}%`;
+        card.style.top = `${y * 100}%`;
+        card.dataset.dragX = String(x);
+        card.dataset.dragY = String(y);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        if (!moved) return;
+        const x = Number(card.dataset.dragX || startBox.x);
+        const y = Number(card.dataset.dragY || startBox.y);
+        void this.updatePdfTextBox(paper, mark.id, { box: { ...startBox, x, y } });
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+    };
+    header.addEventListener("pointerdown", startDrag);
+    grip.addEventListener("pointerdown", startDrag);
+
+    remove.addEventListener("pointerdown", (event) => event.stopPropagation());
+    remove.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.deletePdfTextBox(paper, mark);
+    });
+    card.addEventListener("pointerdown", (event) => event.stopPropagation());
+    card.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      new Menu().addItem((item) => item
+        .setTitle("删除文本框")
+        .setIcon("trash-2")
+        .onClick(() => { void this.deletePdfTextBox(paper, mark); }))
+        .showAtMouseEvent(event);
+    });
+    layer.appendChild(card);
+  }
+
+  async createPdfTextBox(paper, file, pageNumber, box) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !file?.path || !pageNumber) return null;
+    const id = workspaceId("textbox");
+    const mark = {
+      id,
+      pdfAnnotationId: id,
+      text: "",
+      page: pageNumber,
+      comment: "",
+      selection: { beginIndex: -1, beginOffset: -1, endIndex: -1, endOffset: -1 },
+      selectionSource: "textbox",
+      rectCoordinateSpace: "page-relative",
+      color: "yellow",
+      pdfSubtype: "FreeText",
+      box: { x: box.x, y: box.y, width: box.width || 0.32 },
+      pdfRects: [],
+      pdfPath: file.path,
+      createdAt: new Date().toISOString()
+    };
+    paper.annotations = Array.isArray(paper.annotations) ? paper.annotations : [];
+    paper.annotations.push(mark);
+    await this.saveSettings();
+    await this.syncLocalPdfAnnotation(mark);
+    this.refreshNativePdfTextBoxes(paper);
+    const card = this.app.workspace.getLeavesOfType?.("pdf")?.find((leaf) => leaf.view?.file?.path === file.path)
+      ?.view?.containerEl?.querySelector?.(`.paperlib-pdf-textbox-card[data-mark-id="${id}"] .paperlib-pdf-textbox-content`);
+    card?.focus?.();
+    return mark;
+  }
+
+  async updatePdfTextBox(paper, markId, changes = {}) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return false;
+    const mark = (paper.annotations || []).find((item) => item.id === markId && item.pdfSubtype === "FreeText");
+    if (!mark) return false;
+    if (typeof changes.comment === "string") mark.comment = changes.comment;
+    if (changes.box) mark.box = { ...(mark.box || {}), ...changes.box };
+    mark.updatedAt = new Date().toISOString();
+    await this.saveSettings();
+    await this.syncLocalPdfAnnotation(mark);
+    await this.upsertPdfTextBoxNoteEntry(paper, mark);
+    this.refreshNativePdfTextBoxes(paper);
+    return true;
+  }
+
+  async deletePdfTextBox(paper, mark) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper || !mark) return;
+    await this.deletePdfMark(paper, { record: mark, source: "paper-annotation" });
+    await this.removePdfTextBoxNoteEntry(paper, mark);
+    this.refreshNativePdfTextBoxes(paper);
+  }
+
+  async upsertPdfTextBoxNoteEntry(paper, mark) {
+    const noteFile = await this.ensurePaperNote(paper);
+    if (!noteFile) return;
+    const heading = this.settings.annotationHeading || "PDF Annotations";
+    const headingLine = `## ${heading}`;
+    const text = String(mark.comment || "").trim();
+    if (!text) return;
+    const quoted = text.split("\n").map((line) => `> ${line}`).join("\n");
+    const block = `> [!pdf|yellow]+ PDF 文本框 · p. ${mark.page}\n${quoted}\n>\n> 保存于 ${new Date().toLocaleString()}\n\n^${mark.id}`;
+    let content = await this.app.vault.read(noteFile);
+    if (!content.includes(headingLine)) content = `${content.trimEnd()}\n\n${headingLine}\n`;
+    const marker = `^${mark.id}`;
+    const markerIndex = content.indexOf(marker);
+    if (markerIndex === -1) {
+      content = `${content.trimEnd()}\n\n${block}\n`;
+    } else {
+      const blockStart = content.lastIndexOf("\n> [!pdf", markerIndex);
+      if (blockStart !== -1) {
+        content = `${content.slice(0, blockStart + 1)}${block}${content.slice(markerIndex + marker.length)}`;
+      }
+    }
+    await this.app.vault.modify(noteFile, content);
+  }
+
+  async removePdfTextBoxNoteEntry(paper, mark) {
+    const noteFile = await this.ensurePaperNote(paper);
+    if (!noteFile) return;
+    let content = await this.app.vault.read(noteFile);
+    const marker = `^${mark.id}`;
+    const markerIndex = content.indexOf(marker);
+    if (markerIndex === -1) return;
+    const blockStart = content.lastIndexOf("\n> [!pdf", markerIndex);
+    if (blockStart === -1) return;
+    let end = markerIndex + marker.length;
+    while (content[end] === "\n") end += 1;
+    content = `${content.slice(0, blockStart)}${content.slice(end)}`;
+    await this.app.vault.modify(noteFile, content);
+  }
+
   recordPdfReadingPosition(paper, page) {
     // 打开时的定位/钉回顶部属于程序性滚动，抑制记录，避免覆盖真实阅读位置
     if (Date.now() < this.nativePdfPositionSuppressUntil) return;
@@ -8072,6 +8349,7 @@ class PaperLibraryPlugin extends Plugin {
     group.querySelector(".is-underline")?.classList.toggle("is-active", state.mode === "underline");
     group.querySelector(".is-ink")?.classList.toggle("is-active", state.mode === "ink");
     group.querySelector(".is-note")?.classList.toggle("is-active", state.mode === "note");
+    group.querySelector(".is-textbox")?.classList.toggle("is-active", state.mode === "textbox");
     group.querySelector(".is-ai-region")?.classList.toggle("is-active", state.mode === "ai-region");
     group.querySelector(".is-eraser")?.classList.toggle("is-active", state.mode === "eraser");
     group.querySelectorAll(".paperlib-native-pdf-width").forEach((button) => {
@@ -8085,6 +8363,7 @@ class PaperLibraryPlugin extends Plugin {
     });
     container.classList.toggle("paperlib-native-highlight-mode", state.mode === "highlight");
     container.classList.toggle("paperlib-native-underline-mode", state.mode === "underline");
+    container.classList.toggle("paperlib-native-textbox-mode", state.mode === "textbox");
     container.classList.toggle("paperlib-native-ink-mode", state.mode === "ink");
     container.classList.toggle("paperlib-native-note-mode", state.mode === "note");
     container.classList.toggle("paperlib-native-ai-region-mode", state.mode === "ai-region");
@@ -8423,6 +8702,13 @@ class PaperLibraryPlugin extends Plugin {
     if (!pageEl || !container.contains(pageEl)) return;
     const hits = await this.findNativePdfMarksAtEvent(event, pageEl, paper, file);
     hits.forEach((entry) => state.erasing.highlights.set(entry.record.id, entry));
+    const card = event.target?.closest?.(".paperlib-pdf-textbox-card");
+    if (card) {
+      const textboxMark = (paper.annotations || []).find((item) => (
+        item.id === card.dataset.markId && item.pdfSubtype === "FreeText"
+      ));
+      if (textboxMark) state.erasing.highlights.set(textboxMark.id, { record: textboxMark, source: "paper-annotation" });
+    }
     const pageNumber = Number(pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number"));
     const stroke = this.findPdfInkStrokeAtEvent(event, pageEl, paper, file.path, pageNumber);
     if (stroke) state.erasing.strokes.set(stroke.id, stroke);
@@ -8442,7 +8728,8 @@ class PaperLibraryPlugin extends Plugin {
       await this.removeCanvasHighlights(paper, canvasEntries.map((entry) => entry.record.id));
     }
     for (const entry of otherEntries) {
-      await this.deletePdfMark(paper, entry);
+      if (entry.record.pdfSubtype === "FreeText") await this.deletePdfTextBox(paper, entry.record);
+      else await this.deletePdfMark(paper, entry);
     }
     for (const id of session.strokes.keys()) {
       await this.removePdfInkStroke(paper, id);
@@ -8461,7 +8748,7 @@ class PaperLibraryPlugin extends Plugin {
     ));
     const annotations = (paper.annotations || []).filter((mark) => (
       normalizePath(mark.pdfPath || paper.pdfPath || "") === path
-      && Array.isArray(mark.pdfRects) && mark.pdfRects.length
+      && (mark.pdfSubtype === "FreeText" ? Boolean(mark.box) : Array.isArray(mark.pdfRects) && mark.pdfRects.length)
     ));
     const records = [...highlights, ...annotations];
     if (!records.length) return 0;
@@ -8489,6 +8776,7 @@ class PaperLibraryPlugin extends Plugin {
     }
     this.refreshResearchPdfHighlights(paper);
     this.refreshNativePdfNoteOverlays(paper);
+    this.refreshNativePdfTextBoxes(paper);
     this.refreshViews();
     return records.length;
   }
@@ -12657,7 +12945,8 @@ class PaperLibraryPlugin extends Plugin {
   }
 
   async upsertLocalPdfAnnotation(mark) {
-    if (!mark?.pdfPath || !Array.isArray(mark.pdfRects) || !mark.pdfRects.length) return false;
+    if (!mark?.pdfPath) return false;
+    if (mark.pdfSubtype !== "FreeText" && (!Array.isArray(mark.pdfRects) || !mark.pdfRects.length)) return false;
     return this.mutateLocalPdf(mark.pdfPath, async (document) => this.writeLocalPdfAnnotation(document, mark));
   }
 
@@ -12679,21 +12968,37 @@ class PaperLibraryPlugin extends Plugin {
         const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
         if (value === annotationId) annots.remove(index);
       }
-      const allRects = mark.pdfRects.map((item) => item.rect).filter((rect) => rect?.length === 4);
-      const rect = [
-        Math.min(...allRects.map((item) => item[0])),
-        Math.min(...allRects.map((item) => item[1])),
-        Math.max(...allRects.map((item) => item[2])),
-        Math.max(...allRects.map((item) => item[3]))
-      ];
+      const subtype = mark.pdfSubtype === "Text" ? "Text"
+        : mark.pdfSubtype === "Underline" ? "Underline"
+          : mark.pdfSubtype === "FreeText" ? "FreeText" : "Highlight";
       const color = this.pdfColor(mark.color);
-      const subtype = mark.pdfSubtype === "Text" ? "Text" : mark.pdfSubtype === "Underline" ? "Underline" : "Highlight";
+      let rect;
+      if (subtype === "FreeText") {
+        // 自由文本框：位置来自页面相对坐标，换算成 PDF 点
+        const size = page.getSize?.() || { width: 612, height: 792 };
+        const box = mark.box || { x: 0.6, y: 0.3, width: 0.32 };
+        const width = Math.max(48, (Number(box.width) || 0.32) * size.width);
+        const x = Math.max(0, Math.min(size.width - width, (Number(box.x) || 0.6) * size.width));
+        const yTop = (1 - Math.max(0, Math.min(1, Number(box.y) || 0.3))) * size.height;
+        const contentText = String(mark.comment || mark.text || "");
+        const lines = Math.max(1, Math.ceil(contentText.length / Math.max(8, Math.floor(width / 5))));
+        const height = Math.max(20, lines * 12 + 8);
+        rect = [x, Math.max(0, yTop - height), Math.min(size.width, x + width), yTop];
+      } else {
+        const allRects = (mark.pdfRects || []).map((item) => item.rect).filter((item) => item?.length === 4);
+        rect = [
+          Math.min(...allRects.map((item) => item[0])),
+          Math.min(...allRects.map((item) => item[1])),
+          Math.max(...allRects.map((item) => item[2])),
+          Math.max(...allRects.map((item) => item[3]))
+        ];
+      }
       const values = {
         Type: "Annot",
         Subtype: subtype,
         Rect: subtype === "Text" ? [rect[2], Math.max(rect[1], rect[3] - 18), rect[2] + 18, rect[3]] : rect,
         C: color,
-        CA: 0.38,
+        CA: subtype === "FreeText" ? 1 : 0.38,
         F: 4,
         T: PDFHexString.fromText("Paper Library"),
         Contents: PDFHexString.fromText(mark.comment || mark.text || "Paper Library annotation"),
@@ -12701,6 +13006,10 @@ class PaperLibraryPlugin extends Plugin {
         M: PDFString.of(this.pdfDate()),
         P: page.ref
       };
+      if (subtype === "FreeText") {
+        values.DA = PDFString.of("/Helvetica 10 Tf 0 g");
+        values.Border = [0, 0, 1];
+      }
       if (subtype === "Highlight") {
         // 写入前合并重叠/相邻矩形：Obsidian 渲染注释时逐个四边形填充，
         // 原始选区矩形大量重叠（同一行拆成多段、上下差 1px），重叠处会被填充两次导致颜色不均。
