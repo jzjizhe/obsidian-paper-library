@@ -482,10 +482,13 @@ class PaperLibraryPlugin extends Plugin {
           return;
         }
         const path = normalizePath(file.path);
-        const marks = (this.ensureResearchWorkspace(paper).highlights || []).filter((mark) => (
-          normalizePath(mark.pdfPath || paper.pdfPath || "") === path
-            && Array.isArray(mark.pdfRects) && mark.pdfRects.length
-        ));
+        const workspace = this.ensureResearchWorkspace(paper);
+        const marks = [
+          ...(workspace.highlights || []),
+          ...(paper.annotations || []),
+          ...(workspace.inkStrokes || []),
+          ...(workspace.pdfShapes || [])
+        ].filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path);
         let written = 0;
         try {
           await this.mutateLocalPdf(path, async (document) => {
@@ -496,8 +499,7 @@ class PaperLibraryPlugin extends Plugin {
               for (let index = annots.size() - 1; index >= 0; index -= 1) {
                 const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
                 if (!dictionary) continue;
-                const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
-                const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+                const value = this.readPdfAnnotationString(document, dictionary, "NM");
                 if (value.startsWith("paperlib:")) annots.remove(index);
               }
             });
