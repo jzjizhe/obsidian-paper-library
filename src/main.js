@@ -7390,10 +7390,26 @@ class PaperLibraryPlugin extends Plugin {
         // Esc 始终回到鼠标工具；文档级捕获保证页面、工具栏、文本框编辑里都能触发
         const keyDownDoc = container.ownerDocument || document;
         const keyDown = (event) => {
-          if (event.key !== "Escape" || event.isComposing) return;
+          if (event.isComposing) return;
           const activeLeaf = this.app.workspace.activeLeaf;
           if (activeLeaf && activeLeaf !== leaf) return;
           if (!activeLeaf && !container.contains(event.target)) return;
+          const key = String(event.key || "").toLowerCase();
+          const modifier = event.metaKey || event.ctrlKey;
+          if (modifier && !event.altKey && (key === "z" || key === "y")) {
+            if (this.isNativePdfUndoBlocked(event.target)) return;
+            const pdfPath = normalizePath(leaf.view?.file?.path || "");
+            if (!pdfPath) return;
+            const redo = key === "y" || event.shiftKey;
+            const stack = this.getNativePdfUndoStack(pdfPath);
+            if (redo ? !stack.redo.length : !stack.undo.length) return;
+            event.preventDefault();
+            event.stopPropagation();
+            void (redo ? this.redoNativePdfAction(pdfPath) : this.undoNativePdfAction(pdfPath))
+              .catch((error) => console.error("Paper Library: undo/redo failed", error));
+            return;
+          }
+          if (event.key !== "Escape") return;
           const active = this.nativePdfStates.get(container);
           if (!active || (!active.mode && !active.paletteOpen)) return;
           this.nativeShapeDrawingCleanup?.();
@@ -8440,6 +8456,7 @@ class PaperLibraryPlugin extends Plugin {
     };
     paper.annotations = Array.isArray(paper.annotations) ? paper.annotations : [];
     paper.annotations.push(mark);
+    this.recordNativePdfUndoAction(paper, file.path, "create", [{ source: "paper-annotation", record: mark }]);
     await this.saveSettings();
     // 空文本框先不写回 PDF，等用户输入内容后由 updatePdfTextBox 触发
     await this.refreshNativePdfTextBoxes(paper);
@@ -9394,18 +9411,33 @@ class PaperLibraryPlugin extends Plugin {
     const entries = [...session.highlights.values()];
     const canvasEntries = entries.filter((entry) => entry.source === "canvas-highlight");
     const otherEntries = entries.filter((entry) => entry.source !== "canvas-highlight");
-    if (canvasEntries.length) {
-      await this.removeCanvasHighlights(paper, canvasEntries.map((entry) => entry.record.id));
+    const eraseRecords = [
+      ...canvasEntries.map((entry) => ({ source: "canvas-highlight", record: entry.record })),
+      ...otherEntries.map((entry) => ({ source: "paper-annotation", record: entry.record })),
+      ...[...session.strokes.values()].map((record) => ({ source: "ink", record })),
+      ...[...(session.shapes?.values?.() || [])].map((record) => ({ source: "shape", record }))
+    ];
+    if (!this.nativePdfUndoSuppressed && eraseRecords.length) {
+      this.recordNativePdfUndoAction(paper, file.path, "delete", eraseRecords);
     }
-    for (const entry of otherEntries) {
-      if (entry.record.pdfSubtype === "FreeText") await this.deletePdfTextBox(paper, entry.record);
-      else await this.deletePdfMark(paper, entry);
-    }
-    for (const id of session.strokes.keys()) {
-      await this.removePdfInkStroke(paper, id);
-    }
-    for (const id of (session.shapes?.keys?.() || [])) {
-      await this.removePdfShape(paper, id);
+    const previousUndoSuppressed = this.nativePdfUndoSuppressed;
+    this.nativePdfUndoSuppressed = true;
+    try {
+      if (canvasEntries.length) {
+        await this.removeCanvasHighlights(paper, canvasEntries.map((entry) => entry.record.id));
+      }
+      for (const entry of otherEntries) {
+        if (entry.record.pdfSubtype === "FreeText") await this.deletePdfTextBox(paper, entry.record);
+        else await this.deletePdfMark(paper, entry);
+      }
+      for (const id of session.strokes.keys()) {
+        await this.removePdfInkStroke(paper, id);
+      }
+      for (const id of (session.shapes?.keys?.() || [])) {
+        await this.removePdfShape(paper, id);
+      }
+    } finally {
+      this.nativePdfUndoSuppressed = previousUndoSuppressed;
     }
     const removed = entries.length + session.strokes.size + (session.shapes?.size || 0);
     if (removed) new Notice(`已擦除 ${removed} 处标注`);
@@ -9431,6 +9463,14 @@ class PaperLibraryPlugin extends Plugin {
     ));
     const records = [...highlights, ...annotations];
     if (!records.length && !shapes.length && !strokes.length) return 0;
+    if (!this.nativePdfUndoSuppressed) {
+      this.recordNativePdfUndoAction(paper, path, "delete", [
+        ...highlights.map((record) => ({ source: "canvas-highlight", record })),
+        ...annotations.map((record) => ({ source: "paper-annotation", record })),
+        ...strokes.map((record) => ({ source: "ink", record })),
+        ...shapes.map((record) => ({ source: "shape", record }))
+      ]);
+    }
     if (highlights.length) {
       const ids = new Set(highlights.map((mark) => mark.id));
       workspace.highlights = (workspace.highlights || []).filter((mark) => !ids.has(mark.id));
@@ -14076,6 +14116,7 @@ class PaperLibraryPlugin extends Plugin {
       createdAt: new Date().toISOString()
     };
     workspace.highlights.push(highlight);
+    this.recordNativePdfUndoAction(paper, pdfPath, "create", [{ source: "canvas-highlight", record: highlight }]);
     await this.persistResearchWorkspace(paper, false);
     await this.syncLocalPdfAnnotation(highlight);
     this.refreshResearchPdfHighlights(paper);
@@ -14260,11 +14301,225 @@ class PaperLibraryPlugin extends Plugin {
     });
   }
 
+  getNativePdfUndoStack(pdfPath) {
+    const path = normalizePath(pdfPath || "");
+    this.nativePdfUndoStacks = this.nativePdfUndoStacks || new Map();
+    if (!this.nativePdfUndoStacks.has(path)) this.nativePdfUndoStacks.set(path, { undo: [], redo: [] });
+    return this.nativePdfUndoStacks.get(path);
+  }
+
+  cloneNativePdfUndoRecord(record) {
+    try {
+      return JSON.parse(JSON.stringify(record));
+    } catch (error) {
+      return { ...record };
+    }
+  }
+
+  recordNativePdfUndoAction(paper, pdfPath, type, records) {
+    if (this.nativePdfUndoSuppressed) return;
+    paper = this.getCanonicalPaper(paper);
+    const path = normalizePath(pdfPath || paper?.pdfPath || "");
+    if (!paper || !path || !Array.isArray(records) || !records.length) return;
+    const stack = this.getNativePdfUndoStack(path);
+    stack.undo.push({
+      type,
+      paperId: paper.id,
+      pdfPath: path,
+      records: records.map(({ source, record }) => ({
+        source,
+        record: this.cloneNativePdfUndoRecord(record)
+      }))
+    });
+    if (stack.undo.length > 50) stack.undo.shift();
+    stack.redo.length = 0;
+  }
+
+  dropNativePdfUndoCreate(pdfPath, id) {
+    const stack = this.getNativePdfUndoStack(pdfPath);
+    stack.undo = stack.undo.filter((action) => !(
+      action.type === "create"
+      && action.records?.length === 1
+      && action.records[0].record?.id === id
+    ));
+  }
+
+  findNativePdfUndoRecord(paper, source, record) {
+    const workspace = this.ensureResearchWorkspace(paper);
+    const id = record?.id;
+    if (!id) return null;
+    if (source === "canvas-highlight") return (workspace.highlights || []).find((item) => item.id === id) || null;
+    if (source === "paper-annotation") return (paper.annotations || []).find((item) => item.id === id) || null;
+    if (source === "ink") return (workspace.inkStrokes || []).find((item) => item.id === id) || null;
+    if (source === "shape") return (workspace.pdfShapes || []).find((item) => item.id === id) || null;
+    return null;
+  }
+
+  async removeNativePdfUndoRecords(paper, records) {
+    const removed = [];
+    const bySource = { "canvas-highlight": [], "paper-annotation": [], ink: [], shape: [] };
+    for (const item of records || []) {
+      const current = this.findNativePdfUndoRecord(paper, item.source, item.record);
+      if (!current || !bySource[item.source]) continue;
+      bySource[item.source].push(current);
+      removed.push({ source: item.source, record: this.cloneNativePdfUndoRecord(current) });
+    }
+    if (bySource["canvas-highlight"].length) {
+      await this.removeCanvasHighlights(paper, bySource["canvas-highlight"].map((mark) => mark.id));
+    }
+    for (const mark of bySource["paper-annotation"]) {
+      if (mark.pdfSubtype === "FreeText") await this.deletePdfTextBox(paper, mark);
+      else await this.deletePdfMark(paper, { record: mark, source: "paper-annotation" });
+    }
+    for (const stroke of bySource.ink) await this.removePdfInkStroke(paper, stroke.id);
+    for (const shape of bySource.shape) await this.removePdfShape(paper, shape.id);
+    return removed;
+  }
+
+  async restoreNativePdfUndoRecords(paper, records) {
+    paper = this.getCanonicalPaper(paper);
+    if (!paper) return [];
+    const workspace = this.ensureResearchWorkspace(paper);
+    const restored = [];
+    const exists = (list, id) => (list || []).some((item) => item.id === id);
+    for (const item of records || []) {
+      const record = this.cloneNativePdfUndoRecord(item.record);
+      if (!record?.id) continue;
+      if (item.source === "canvas-highlight") {
+        if (exists(workspace.highlights, record.id)) continue;
+        workspace.highlights.push(record);
+      } else if (item.source === "paper-annotation") {
+        if (exists(paper.annotations, record.id)) continue;
+        paper.annotations.push(record);
+      } else if (item.source === "ink") {
+        if (exists(workspace.inkStrokes, record.id)) continue;
+        workspace.inkStrokes.push(record);
+      } else if (item.source === "shape") {
+        if (exists(workspace.pdfShapes, record.id)) continue;
+        workspace.pdfShapes.push(record);
+      } else {
+        continue;
+      }
+      restored.push({ source: item.source, record });
+    }
+    if (!restored.length) return [];
+    await this.saveSettings();
+    for (const { source, record } of restored) {
+      if (source === "paper-annotation" && record.pdfSubtype === "FreeText") {
+        try {
+          await this.upsertPdfTextBoxNoteEntry(paper, record);
+        } catch (error) {
+          console.warn("Paper Library: failed to restore text box note entry", error);
+        }
+      }
+      if (source === "canvas-highlight" || source === "paper-annotation") {
+        try {
+          await this.syncLocalPdfAnnotation(record);
+        } catch (error) {
+          console.warn("Paper Library: failed to restore PDF annotation", error);
+        }
+      }
+    }
+    this.refreshResearchPdfHighlights(paper);
+    this.refreshNativePdfShapeOverlays(paper);
+    await this.refreshNativePdfTextBoxes(paper);
+    return restored;
+  }
+
+  async applyNativePdfUndoAction(action, invert) {
+    const paper = this.getCanonicalPaper({ id: action.paperId });
+    if (!paper) return [];
+    const effectiveType = invert
+      ? (action.type === "create" ? "delete" : "create")
+      : action.type;
+    if (effectiveType === "create") {
+      return this.restoreNativePdfUndoRecords(paper, action.records);
+    }
+    return this.removeNativePdfUndoRecords(paper, action.records);
+  }
+
+  async undoNativePdfAction(pdfPath) {
+    const stack = this.getNativePdfUndoStack(pdfPath);
+    if (!stack.undo.length) return false;
+    const action = stack.undo.pop();
+    this.nativePdfUndoSuppressed = true;
+    let inverse = null;
+    try {
+      const records = await this.applyNativePdfUndoAction(action, true);
+      if (records?.length) {
+        inverse = {
+          type: action.type,
+          paperId: action.paperId,
+          pdfPath: action.pdfPath,
+          records
+        };
+      }
+    } finally {
+      this.nativePdfUndoSuppressed = false;
+    }
+    if (inverse) {
+      stack.redo.push(inverse);
+      if (stack.redo.length > 50) stack.redo.shift();
+    }
+    return true;
+  }
+
+  async redoNativePdfAction(pdfPath) {
+    const stack = this.getNativePdfUndoStack(pdfPath);
+    if (!stack.redo.length) return false;
+    const action = stack.redo.pop();
+    this.nativePdfUndoSuppressed = true;
+    let inverse = null;
+    try {
+      const records = await this.applyNativePdfUndoAction(action, false);
+      if (records?.length) {
+        inverse = {
+          type: action.type,
+          paperId: action.paperId,
+          pdfPath: action.pdfPath,
+          records
+        };
+      }
+    } finally {
+      this.nativePdfUndoSuppressed = false;
+    }
+    if (inverse) {
+      stack.undo.push(inverse);
+      if (stack.undo.length > 50) stack.undo.shift();
+    }
+    return true;
+  }
+
+  isNativePdfUndoBlocked(target) {
+    const element = target?.nodeType === 1
+      ? target
+      : (typeof document !== "undefined" ? document.activeElement : null);
+    if (!element) return false;
+    const tag = String(element.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return true;
+    if (element.isContentEditable) return true;
+    return Boolean(element.closest?.(".modal, .cm-editor, .paperlib-pdf-textbox-card.is-editing"));
+  }
+
   async deletePdfMark(paper, entry) {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !entry?.record) return false;
     if (entry.source === "canvas-highlight") return this.removeCanvasHighlight(paper, entry.record.id);
     const workspace = this.ensureResearchWorkspace(paper);
+    const isDraftText = entry.record.pdfSubtype === "FreeText"
+      && !String(entry.record.comment || "").trim();
+    if (!this.nativePdfUndoSuppressed) {
+      if (isDraftText) {
+        this.dropNativePdfUndoCreate(entry.record.pdfPath || paper.pdfPath, entry.record.id);
+      } else {
+        this.recordNativePdfUndoAction(
+          paper,
+          entry.record.pdfPath || paper.pdfPath,
+          "delete",
+          [{ source: "paper-annotation", record: entry.record }]
+        );
+      }
+    }
     const node = workspace.nodes.find((item) => (
       item.annotationId === entry.record.id
       || (item.pdfAnnotationId && item.pdfAnnotationId === entry.record.pdfAnnotationId)
@@ -14301,6 +14556,17 @@ class PaperLibraryPlugin extends Plugin {
     const ids = new Set(highlightIds || []);
     const before = workspace.highlights.length;
     const removed = workspace.highlights.filter((highlight) => ids.has(highlight.id));
+    if (!this.nativePdfUndoSuppressed && removed.length) {
+      const groups = new Map();
+      removed.forEach((highlight) => {
+        const path = normalizePath(highlight.pdfPath || paper.pdfPath || "");
+        if (!groups.has(path)) groups.set(path, []);
+        groups.get(path).push({ source: "canvas-highlight", record: highlight });
+      });
+      groups.forEach((records, path) => {
+        this.recordNativePdfUndoAction(paper, path, "delete", records);
+      });
+    }
     workspace.highlights = workspace.highlights.filter((highlight) => !ids.has(highlight.id));
     if (workspace.highlights.length === before) return false;
     await this.persistResearchWorkspace(paper, false);
@@ -14344,7 +14610,10 @@ class PaperLibraryPlugin extends Plugin {
     };
     const index = workspace.inkStrokes.findIndex((item) => item.id === stroke.id);
     if (index >= 0) workspace.inkStrokes[index] = stroke;
-    else workspace.inkStrokes.push(stroke);
+    else {
+      workspace.inkStrokes.push(stroke);
+      this.recordNativePdfUndoAction(paper, stroke.pdfPath, "create", [{ source: "ink", record: stroke }]);
+    }
     await this.persistResearchWorkspace(paper, false);
     this.refreshResearchPdfHighlights(paper);
     return true;
@@ -14355,11 +14624,15 @@ class PaperLibraryPlugin extends Plugin {
     if (!paper || !strokeId) return false;
     const workspace = this.ensureResearchWorkspace(paper);
     const before = workspace.inkStrokes.length;
+    const removed = workspace.inkStrokes.find((stroke) => stroke.id === strokeId);
+    if (removed && !this.nativePdfUndoSuppressed) {
+      this.recordNativePdfUndoAction(paper, removed.pdfPath || paper.pdfPath, "delete", [{ source: "ink", record: removed }]);
+    }
     workspace.inkStrokes = workspace.inkStrokes.filter((stroke) => stroke.id !== strokeId);
     if (workspace.inkStrokes.length === before) return false;
     await this.persistResearchWorkspace(paper, false);
     this.refreshResearchPdfHighlights(paper);
-    new Notice("已删除画笔标注");
+    if (!this.nativePdfUndoSuppressed) new Notice("已删除画笔标注");
     return true;
   }
 
@@ -14395,7 +14668,10 @@ class PaperLibraryPlugin extends Plugin {
     };
     const index = workspace.pdfShapes.findIndex((item) => item.id === shape.id);
     if (index >= 0) workspace.pdfShapes[index] = shape;
-    else workspace.pdfShapes.push(shape);
+    else {
+      workspace.pdfShapes.push(shape);
+      this.recordNativePdfUndoAction(paper, shape.pdfPath, "create", [{ source: "shape", record: shape }]);
+    }
     await this.persistResearchWorkspace(paper, false);
     this.refreshNativePdfShapeOverlays(paper);
     return true;
@@ -14406,11 +14682,15 @@ class PaperLibraryPlugin extends Plugin {
     if (!paper || !shapeId) return false;
     const workspace = this.ensureResearchWorkspace(paper);
     const before = workspace.pdfShapes.length;
+    const removed = workspace.pdfShapes.find((shape) => shape.id === shapeId);
+    if (removed && !this.nativePdfUndoSuppressed) {
+      this.recordNativePdfUndoAction(paper, removed.pdfPath || paper.pdfPath, "delete", [{ source: "shape", record: removed }]);
+    }
     workspace.pdfShapes = workspace.pdfShapes.filter((shape) => shape.id !== shapeId);
     if (workspace.pdfShapes.length === before) return false;
     await this.persistResearchWorkspace(paper, false);
     this.refreshNativePdfShapeOverlays(paper);
-    new Notice("已删除形状");
+    if (!this.nativePdfUndoSuppressed) new Notice("已删除形状");
     return true;
   }
 
