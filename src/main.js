@@ -7167,7 +7167,10 @@ class PaperLibraryPlugin extends Plugin {
         const shapeCount = (workspace.pdfShapes || []).filter((shape) => (
           normalizePath(shape.pdfPath || paper.pdfPath || "") === path
         )).length;
-        const total = highlightCount + annotationCount + shapeCount;
+        const inkCount = (workspace.inkStrokes || []).filter((stroke) => (
+          normalizePath(stroke.pdfPath || paper.pdfPath || "") === path
+        )).length;
+        const total = highlightCount + annotationCount + shapeCount + inkCount;
         if (!total) return new Notice("本文没有标注");
         new ClearAnnotationsModal(this.app, this, paper, path, total).open();
       });
@@ -9234,8 +9237,11 @@ class PaperLibraryPlugin extends Plugin {
     const shapes = (workspace.pdfShapes || []).filter((shape) => (
       normalizePath(shape.pdfPath || paper.pdfPath || "") === path
     ));
+    const strokes = (workspace.inkStrokes || []).filter((stroke) => (
+      normalizePath(stroke.pdfPath || paper.pdfPath || "") === path
+    ));
     const records = [...highlights, ...annotations];
-    if (!records.length && !shapes.length) return 0;
+    if (!records.length && !shapes.length && !strokes.length) return 0;
     if (highlights.length) {
       const ids = new Set(highlights.map((mark) => mark.id));
       workspace.highlights = (workspace.highlights || []).filter((mark) => !ids.has(mark.id));
@@ -9258,6 +9264,11 @@ class PaperLibraryPlugin extends Plugin {
       workspace.pdfShapes = (workspace.pdfShapes || []).filter((shape) => !ids.has(shape.id));
       await this.persistResearchWorkspace(paper, false);
     }
+    if (strokes.length) {
+      const ids = new Set(strokes.map((stroke) => stroke.id));
+      workspace.inkStrokes = (workspace.inkStrokes || []).filter((stroke) => !ids.has(stroke.id));
+      await this.persistResearchWorkspace(paper, false);
+    }
     try {
       await this.removeLocalPdfAnnotations(records);
     } catch (error) {
@@ -9267,8 +9278,9 @@ class PaperLibraryPlugin extends Plugin {
     this.refreshNativePdfNoteOverlays(paper);
     this.refreshNativePdfTextBoxes(paper);
     this.refreshNativePdfShapeOverlays(paper);
+    this.refreshNativePdfInkOverlays(paper);
     this.refreshViews();
-    return records.length + shapes.length;
+    return records.length + shapes.length + strokes.length;
   }
 
   showNativePdfMarkDeleteMenu(event, paper, marks) {
