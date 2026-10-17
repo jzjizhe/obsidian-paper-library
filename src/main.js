@@ -441,17 +441,29 @@ class PaperLibraryPlugin extends Plugin {
             && Array.isArray(mark.pdfRects) && mark.pdfRects.length
         ));
         let written = 0;
-        for (const mark of marks) {
-          try {
-            if (await this.upsertLocalPdfAnnotation(mark)) written += 1;
-          } catch (error) {
-            console.error("Paper Library: failed to rewrite PDF annotation", error);
-          }
-        }
         try {
-          await this.pruneLocalPdfAnnotations(path);
+          await this.mutateLocalPdf(path, async (document) => {
+            // 一次写入内完成：清空本插件的全部注释，再按库内标注重建（不带外观流）
+            document.getPages().forEach((page) => {
+              const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+              if (!annots) return;
+              for (let index = annots.size() - 1; index >= 0; index -= 1) {
+                const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
+                if (!dictionary) continue;
+                const idValue = document.context.lookupMaybe(dictionary.get(PDFName.of("NM")), PDFString, PDFHexString);
+                const value = idValue?.decodeText?.() || idValue?.asString?.() || "";
+                if (value.startsWith("paperlib:")) annots.remove(index);
+              }
+            });
+            marks.forEach((mark) => {
+              if (this.writeLocalPdfAnnotation(document, mark)) written += 1;
+            });
+            return true;
+          });
         } catch (error) {
-          console.error("Paper Library: failed to prune PDF annotations", error);
+          console.error("Paper Library: failed to rewrite PDF annotations", error);
+          new Notice(`重写失败：${error.message || error}`);
+          return;
         }
         new Notice(`已重写 ${written} 条批注（去除外观流），并清理孤儿注释`);
       }
@@ -12156,7 +12168,11 @@ class PaperLibraryPlugin extends Plugin {
 
   async upsertLocalPdfAnnotation(mark) {
     if (!mark?.pdfPath || !Array.isArray(mark.pdfRects) || !mark.pdfRects.length) return false;
-    return this.mutateLocalPdf(mark.pdfPath, async (document) => {
+    return this.mutateLocalPdf(mark.pdfPath, async (document) => this.writeLocalPdfAnnotation(document, mark));
+  }
+
+  writeLocalPdfAnnotation(document, mark) {
+    {
       const page = document.getPage(Math.max(0, Number(mark.page || 1) - 1));
       if (!page) throw new Error("PDF 页码不存在");
       const annotationId = `paperlib:${mark.pdfAnnotationId || mark.id}`;
@@ -12204,7 +12220,7 @@ class PaperLibraryPlugin extends Plugin {
       const annotation = document.context.obj(values);
       annots.push(document.context.register(annotation));
       return true;
-    });
+    }
   }
 
   async removeLocalPdfAnnotations(marks) {
