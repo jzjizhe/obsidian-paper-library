@@ -7078,9 +7078,12 @@ class PaperLibraryPlugin extends Plugin {
 
   ensureNativePdfHighlightLayer(pageEl) {
     let layer = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
-    if (layer) return layer;
-    layer = document.createElement("div");
-    layer.className = "paperlib-native-pdf-highlight-layer";
+    if (layer?.tagName?.toLocaleLowerCase?.() === "svg") return layer;
+    layer?.remove?.();
+    layer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    layer.setAttribute("class", "paperlib-native-pdf-highlight-layer");
+    layer.setAttribute("viewBox", "0 0 1000 1000");
+    layer.setAttribute("preserveAspectRatio", "none");
     layer.setAttribute("aria-hidden", "true");
     pageEl.appendChild(layer);
     return layer;
@@ -7106,7 +7109,8 @@ class PaperLibraryPlugin extends Plugin {
           && Number(mark.page) === pageNumber
           && Array.isArray(mark.pdfRects) && mark.pdfRects.length
       ));
-      const signature = marks.map((mark) => `${mark.id}:${mark.color}`).join("|");
+      // 版本前缀：渲染方式升级时强制重绘，避免旧 DOM 因签名相同被跳过
+      const signature = `svg1|${marks.map((mark) => `${mark.id}:${mark.color}`).join("|")}`;
       const existing = pageEl.querySelector(":scope > .paperlib-native-pdf-highlight-layer");
       if (!force && existing?.dataset.signature === signature) return;
       const layer = existing || this.ensureNativePdfHighlightLayer(pageEl);
@@ -7116,29 +7120,26 @@ class PaperLibraryPlugin extends Plugin {
         const color = CANVAS_HIGHLIGHT_COLORS.find((item) => (
           item.id === String(mark.color || "").toLocaleLowerCase()
         )) || CANVAS_HIGHLIGHT_COLORS[0];
-        // 先规范化再合并：上下标（如 [5]、pass@k 的 k）产生的矩形与正文行矩形有重叠，
-        // multiply 混合下重叠处会叠两次颜色变深；画布侧的 mergePdfHighlightViewportRects 与坐标系无关，直接复用
-        const rects = mark.pdfRects
-          .map((item) => item?.rect)
-          .filter((rect) => Array.isArray(rect) && rect.length === 4)
-          .map((rect) => [
-            Math.min(rect[0], rect[2]),
-            Math.min(rect[1], rect[3]),
-            Math.max(rect[0], rect[2]),
-            Math.max(rect[1], rect[3])
-          ]);
-        const merged = this.mergePdfHighlightViewportRects(rects);
-        merged.forEach((rect) => {
-          const element = document.createElement("div");
-          element.className = "paperlib-native-pdf-highlight-rect";
-          element.dataset.markId = mark.id || "";
-          element.style.left = `${rect[0] / dims.width * 100}%`;
-          element.style.top = `${(1 - rect[3] / dims.height) * 100}%`;
-          element.style.width = `${(rect[2] - rect[0]) / dims.width * 100}%`;
-          element.style.height = `${(rect[3] - rect[1]) / dims.height * 100}%`;
-          element.style.background = color.value;
-          layer.appendChild(element);
+        // 每个标注画成一条 SVG 路径：同一路径内的重叠子区域只填充一次，
+        // 无论选区矩形如何重叠都不会叠色（multiply 只作用于不同标注之间）
+        const segments = [];
+        mark.pdfRects.forEach((item) => {
+          const rect = item?.rect;
+          if (!Array.isArray(rect) || rect.length !== 4) return;
+          const x1 = Math.min(rect[0], rect[2]) / dims.width * 1000;
+          const x2 = Math.max(rect[0], rect[2]) / dims.width * 1000;
+          const yTop = (1 - Math.max(rect[1], rect[3]) / dims.height) * 1000;
+          const yBottom = (1 - Math.min(rect[1], rect[3]) / dims.height) * 1000;
+          if (x2 - x1 < 0.05 || yBottom - yTop < 0.05) return;
+          segments.push(`M${x1.toFixed(2)} ${yTop.toFixed(2)}H${x2.toFixed(2)}V${yBottom.toFixed(2)}H${x1.toFixed(2)}Z`);
         });
+        if (!segments.length) return;
+        const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        pathEl.setAttribute("class", "paperlib-native-pdf-highlight-path");
+        pathEl.dataset.markId = mark.id || "";
+        pathEl.setAttribute("d", segments.join(""));
+        pathEl.setAttribute("fill", color.value);
+        layer.appendChild(pathEl);
       });
     });
   }
@@ -7160,13 +7161,26 @@ class PaperLibraryPlugin extends Plugin {
     const pageEl = event.target?.closest?.(".page[data-page-number], .page");
     if (!pageEl || !container.contains(pageEl)) return this.hideNativePdfHighlightTooltip();
     let hit = null;
-    pageEl.querySelectorAll(".paperlib-native-pdf-highlight-rect").forEach((rectEl) => {
+    pageEl.querySelectorAll(".paperlib-native-pdf-highlight-path").forEach((pathEl) => {
       if (hit) return;
-      const rect = rectEl.getBoundingClientRect?.();
-      if (rect && event.clientX >= rect.left && event.clientX <= rect.right
-        && event.clientY >= rect.top && event.clientY <= rect.bottom) {
-        hit = rectEl;
+      let inside = false;
+      try {
+        const matrix = pathEl.getScreenCTM?.();
+        if (matrix && typeof pathEl.isPointInFill === "function") {
+          const point = pathEl.ownerSVGElement.createSVGPoint();
+          point.x = event.clientX;
+          point.y = event.clientY;
+          inside = pathEl.isPointInFill(point.matrixTransform(matrix.inverse()));
+        }
+      } catch (error) {
+        inside = false;
       }
+      if (!inside) {
+        const rect = pathEl.getBoundingClientRect?.();
+        inside = Boolean(rect && event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom);
+      }
+      if (inside) hit = pathEl;
     });
     if (!hit) return this.hideNativePdfHighlightTooltip();
     const file = leaf.view?.file || this.app.workspace.getActiveFile();

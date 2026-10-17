@@ -8926,14 +8926,14 @@ button.paperlib-file-open {
   position: absolute;
   z-index: 1;
   inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
+  mix-blend-mode: multiply;
 }
 
-.paperlib-native-pdf-highlight-rect {
-  position: absolute;
-  border-radius: 1.5px;
-  mix-blend-mode: multiply;
-  opacity: .42;
+.paperlib-native-pdf-highlight-path {
+  fill-opacity: .42;
 }
 
 .paperlib-native-pdf-highlight-tooltip {

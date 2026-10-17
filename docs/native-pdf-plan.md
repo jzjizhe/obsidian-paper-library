@@ -77,6 +77,10 @@
   - 翻译：`Translate this passage into Chinese.`
 - 标注回看：原生工具栏新增"标注列表"按钮，打开 `PdfAnnotationsModal`（`src/modals/annotations.js`）。按页码排序列出本文所有高亮（色点 + 页码 + 摘要），点击跳到原生阅读器对应页，每行可删除（走 `deletePdfMark` 的 canvas-highlight 分支）。跳页复用新增的 `scrollNativePdfToPage` / `openNativePdfAtPage`。
 
+### 🔧 修复：不同 PDF 高亮颜色仍不均匀
+
+部分 PDF（含数学/斜体等混合内联文字的排版）选区会产生高度差异大的重叠矩形，之前的"先合并矩形"判断失败后仍会叠色。改为**每个标注渲染为一条 SVG 路径**（`d` 由各矩形子路径拼接）：同一路径内的重叠区域按 nonzero 填充规则只填一次，multiply 仅作用于不同标注之间，从根上消除叠色。悬停命中检测改用 `isPointInFill`（带包围盒兜底）。覆盖层签名加版本前缀 `svg1|`，保证升级后旧 DOM 强制重绘。
+
 ### ✅ P2：默认颜色、数字快捷键、悬停气泡
 
 - 默认高亮颜色：沿用已有的 `settings.defaultHighlightColor` 设置项（更新描述覆盖新用途），原生工具栏状态与画布视图的初始颜色都从这里读取，读取时统一小写归一。
