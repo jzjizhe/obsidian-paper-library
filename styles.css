@@ -9850,6 +9850,12 @@ button.paperlib-file-open {
   box-shadow: inset 0 0 0 2px var(--background-primary), inset 0 0 0 7px var(--swatch-color);
 }
 
+/* 选择模式统一用箭头光标；下面各工具模式的 !important 规则同优先级、位置更靠后，会覆盖这条 */
+.paperlib-native-pdf-host .textLayer,
+.paperlib-native-pdf-host .textLayer span {
+  cursor: default !important;
+}
+
 .paperlib-native-highlight-mode .textLayer,
 .paperlib-native-highlight-mode .textLayer span {
   cursor: var(--paperlib-native-highlighter-cursor), crosshair !important;
