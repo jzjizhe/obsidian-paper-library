@@ -855,6 +855,7 @@ class PaperLibraryPlugin extends Plugin {
   onunload() {
     this.stopExtensionServer();
     void this.flushPdfAnnotationSyncs();
+    void this.flushPdfOverlayPersists().catch(() => {});
     this.composerMountObserver?.disconnect?.();
     this.composerMountObserver = null;
     document.body?.removeClass?.("paperlib-paperglass-active");
@@ -6860,6 +6861,9 @@ class PaperLibraryPlugin extends Plugin {
     // 这是退出 Obsidian 前最后一道兜底。
     const flushPending = () => {
       if (this.pendingPdfAnnotationSyncs?.size) void this.flushPdfAnnotationSyncs();
+      void this.flushPdfOverlayPersists().catch((error) => (
+        console.warn("Paper Library: failed to flush PDF overlay data", error)
+      ));
     };
     if (this.registerDomEvent && typeof window !== "undefined") {
       this.registerDomEvent(window, "blur", flushPending);
@@ -14457,6 +14461,11 @@ class PaperLibraryPlugin extends Plugin {
     } finally {
       this.nativePdfUndoSuppressed = false;
     }
+    try {
+      await this.flushPdfOverlayPersists();
+    } catch (error) {
+      console.warn("Paper Library: failed to persist undo result", error);
+    }
     if (inverse) {
       stack.redo.push(inverse);
       if (stack.redo.length > 50) stack.redo.shift();
@@ -14482,6 +14491,11 @@ class PaperLibraryPlugin extends Plugin {
       }
     } finally {
       this.nativePdfUndoSuppressed = false;
+    }
+    try {
+      await this.flushPdfOverlayPersists();
+    } catch (error) {
+      console.warn("Paper Library: failed to persist redo result", error);
     }
     if (inverse) {
       stack.undo.push(inverse);
@@ -14591,6 +14605,22 @@ class PaperLibraryPlugin extends Plugin {
     ));
   }
 
+  schedulePdfOverlayPersist() {
+    // 画笔/形状可能每秒产生很多次保存，合并成一次 settings 写入，避免反复重写整个 data.json
+    if (this.pdfOverlayPersistTimer) clearTimeout(this.pdfOverlayPersistTimer);
+    this.pdfOverlayPersistTimer = setTimeout(() => {
+      this.pdfOverlayPersistTimer = null;
+      void this.saveSettings().catch((error) => console.error("Paper Library: failed to persist PDF overlays", error));
+    }, 350);
+  }
+
+  async flushPdfOverlayPersists() {
+    if (!this.pdfOverlayPersistTimer) return;
+    clearTimeout(this.pdfOverlayPersistTimer);
+    this.pdfOverlayPersistTimer = null;
+    await this.saveSettings();
+  }
+
   async savePdfInkStroke(paper, source = {}) {
     paper = this.getCanonicalPaper(paper);
     if (!paper || !Array.isArray(source.points) || !source.points.length) return false;
@@ -14614,7 +14644,7 @@ class PaperLibraryPlugin extends Plugin {
       workspace.inkStrokes.push(stroke);
       this.recordNativePdfUndoAction(paper, stroke.pdfPath, "create", [{ source: "ink", record: stroke }]);
     }
-    await this.persistResearchWorkspace(paper, false);
+    this.schedulePdfOverlayPersist();
     this.refreshResearchPdfHighlights(paper);
     return true;
   }
@@ -14630,7 +14660,7 @@ class PaperLibraryPlugin extends Plugin {
     }
     workspace.inkStrokes = workspace.inkStrokes.filter((stroke) => stroke.id !== strokeId);
     if (workspace.inkStrokes.length === before) return false;
-    await this.persistResearchWorkspace(paper, false);
+    this.schedulePdfOverlayPersist();
     this.refreshResearchPdfHighlights(paper);
     if (!this.nativePdfUndoSuppressed) new Notice("已删除画笔标注");
     return true;
@@ -14672,7 +14702,7 @@ class PaperLibraryPlugin extends Plugin {
       workspace.pdfShapes.push(shape);
       this.recordNativePdfUndoAction(paper, shape.pdfPath, "create", [{ source: "shape", record: shape }]);
     }
-    await this.persistResearchWorkspace(paper, false);
+    this.schedulePdfOverlayPersist();
     this.refreshNativePdfShapeOverlays(paper);
     return true;
   }
@@ -14688,7 +14718,7 @@ class PaperLibraryPlugin extends Plugin {
     }
     workspace.pdfShapes = workspace.pdfShapes.filter((shape) => shape.id !== shapeId);
     if (workspace.pdfShapes.length === before) return false;
-    await this.persistResearchWorkspace(paper, false);
+    this.schedulePdfOverlayPersist();
     this.refreshNativePdfShapeOverlays(paper);
     if (!this.nativePdfUndoSuppressed) new Notice("已删除形状");
     return true;

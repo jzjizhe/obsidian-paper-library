@@ -116,6 +116,21 @@ async function run() {
   assert.equal(stack.undo.some((action) => action.records.some((item) => item.record.id === draft.id)), false);
   assert.equal(paper.annotations.some((mark) => mark.id === draft.id), false);
 
+  // 画笔/形状写入防抖：保存函数先改内存，settings 延后一次写入
+  let saves = 0;
+  plugin.saveSettings = async () => { saves += 1; };
+  assert.equal(await plugin.savePdfInkStroke(paper, {
+    page: 1,
+    pdfPath,
+    color: "blue",
+    width: 3,
+    points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }]
+  }), true);
+  assert.equal(saves, 0, "a new ink stroke must not rewrite settings immediately");
+  assert.equal(workspace.inkStrokes.length, 1);
+  await plugin.flushPdfOverlayPersists();
+  assert.ok(saves >= 1, "flushing must persist the pending overlay data");
+
   console.log("PDF undo/redo tests passed.");
 }
 
