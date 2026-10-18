@@ -58,13 +58,11 @@
 
 ## P2：架构与维护
 
-- [ ] **12. `src/main.js` 体积**
-  - 现状：约 1.49 万行，PDF 阅读器是独立功能域。
-  - 建议：作为阶段五拆分到 `src/pdf-reader/`（工具栏、覆盖层、写回、文本框、形状、阅读位置），沿用 services 的委托模式。
+- [x] **12. `src/main.js` 体积**
+  - 已完成阶段五：PDF 阅读器拆到 `src/pdf-reader/`，按 writeback、overlays、textbox、marks、ink-shapes、undo、reading-position、toolbar 八个模块组织；主类保留 mixin 安装，调用点零改动。`src/main.js` 从 15,721 行降到约 11,474 行。
 
-- [ ] **13. 调试命令留在正式版**
-  - 现状：`rewrite-pdf-annotations`、`merge-overlapping-highlights` 以及多个 `debug-*` 命令直接出现在命令面板，其中部分会改写 PDF。
-  - 建议：收进开发者设置开关或从发布版移除。
+- [x] **13. 调试命令留在正式版**
+  - 已完成：新增“开发者 → 显示调试命令”开关（默认关闭）。`merge-overlapping-highlights`、`rewrite-pdf-annotations`、所有 `debug-*` 命令仅在开启并重新加载插件后注册。
 
 - [ ] **14. 测试覆盖缺口**
   - 现状：`highlight.test.js`、`mobile.test.js`、`semantic-scholar.test.js`、`extension-server.test.js` 未纳入 `npm test`；文本框写回仍缺少专门测试。
@@ -82,3 +80,5 @@
 - **空文本框清理**：新建文本框后等待卡片渲染完成并直接进入编辑；空内容不写回 PDF；打开 PDF 时自动清理历史空框及其写坏的兜底注解。
 - **撤销/重做**：新增按 PDF 路径隔离的操作栈，覆盖新建/删除；批量操作作为一条记录。
 - **持久化与 Ink 写回**：覆盖层持久化改为防抖；画笔/形状写成 Ink 注解，按路径批量写回，并自动补写历史覆盖层。
+- **阶段五拆分**：PDF 阅读器方法迁移到 `src/pdf-reader/` 八个模块，通过 `installPdfReaderMethods` 安装到主类原型；`main.js` 约 1.15 万行。
+- **开发者开关**：调试/重写注解命令默认隐藏，可在设置中开启后重载插件使用。

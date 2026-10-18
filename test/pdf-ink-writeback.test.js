@@ -17,7 +17,7 @@ pluginModule.filename = filename;
 pluginModule.paths = Module._nodeModulePaths(path.dirname(filename));
 pluginModule.require = (name) => name === "obsidian" ? obsidianMock : module.require(name);
 pluginModule._compile(
-  `${fs.readFileSync(filename, "utf8")}\nmodule.exports.pdfLibForTest = { PDFDocument, PDFName, PDFArray, PDFDict, PDFString, PDFHexString };`,
+  `${fs.readFileSync(filename, "utf8")}\nmodule.exports.pdfLibForTest = PaperLibraryPlugin.pdfLibForTest;`,
   filename
 );
 const PaperLibraryPlugin = pluginModule.exports;

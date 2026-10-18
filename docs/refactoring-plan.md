@@ -133,3 +133,20 @@
 ### ✅ 13. library-view.js
 
 3,144 行。主视图 + Navigation/Detail 两个子类一起搬（继承链同模块）。至此阶段三完成：main.js 只剩 PDF 头部工具函数（等 #16 带走）和插件主类。
+
+### ✅ 阶段五：PDF 阅读器拆分
+
+`src/main.js` 从 15,721 行降到约 11,474 行。PDF 阅读器按功能域拆成 `src/pdf-reader/`：
+
+- `writeback.js`：PDF 读取/备份/写回、高亮/文本框/Ink 注解、删除与孤儿清理。
+- `overlays.js`：高亮/画笔/形状/注释徽标/文本框覆盖层与内嵌检测。
+- `textbox.js`：文本框 CRUD、字号/颜色、笔记条目。
+- `marks.js`：高亮保存/选区几何/标注删除。
+- `ink-shapes.js`：画笔/形状存储、命中检测、防抖持久化与历史补写。
+- `undo.js`：按 PDF 路径隔离的撤销/重做栈。
+- `reading-position.js`：阅读位置记录、恢复与首屏纠偏。
+- `toolbar.js`：原生阅读器工具栏、选区拖拽、指针交互、橡皮/清空、AI 圈选。
+
+与 services 的委托模式不同，这里采用 **mixin 安装**：`index.js` 把方法对象合并后通过 `installPdfReaderMethods(PaperLibraryPlugin)` 挂到原型上，方法体保留 `this`，调用点零改动。每个模块只导入自己用到的 obsidian/常量/工具函数，测试和打包产物不变。
+
+调试命令收进“开发者 → 显示调试命令”开关，默认关闭；开启后重新加载插件才会注册。
