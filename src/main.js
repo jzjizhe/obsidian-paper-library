@@ -7191,6 +7191,7 @@ class PaperLibraryPlugin extends Plugin {
         state.mode = state.mode === "eraser" ? "" : "eraser";
         state.paletteOpen = false;
         state.erasing = null;
+        container.ownerDocument?.defaultView?.getSelection?.()?.removeAllRanges?.();
         this.updateNativePdfToolbarState(container, group, state);
       });
       clearAll.addEventListener("click", (event) => {
@@ -7340,6 +7341,10 @@ class PaperLibraryPlugin extends Plugin {
             return;
           }
           if (active?.mode === "eraser") {
+            // 阻止浏览器把橡皮擦拖动当成文本选择
+            event.preventDefault();
+            event.stopPropagation();
+            container.ownerDocument?.defaultView?.getSelection?.()?.removeAllRanges?.();
             if (pageEl && container.contains(pageEl)) {
               active.erasing = { highlights: new Map(), strokes: new Map(), shapes: new Map() };
               void this.collectNativePdfEraseTargets(event, leaf, container, active);

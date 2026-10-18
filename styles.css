@@ -9977,6 +9977,17 @@ button.paperlib-file-open {
 .paperlib-native-eraser-mode .textLayer,
 .paperlib-native-eraser-mode .textLayer span {
   cursor: cell !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.paperlib-native-eraser-mode .page {
+  touch-action: none;
+}
+
+.paperlib-native-eraser-mode .paperlib-pdf-textbox-card {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .paperlib-native-highlight-mode .textLayer,
