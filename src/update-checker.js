@@ -2,7 +2,7 @@
    不依赖 Obsidian，可在 Node 中直接 import 进行单元测试。
    网络请求与安装流程在插件主类中（后续 services/self-update.js 拆分）。 */
 
-const PAPER_LIBRARY_RELEASES_API = "https://api.github.com/repos/Lyle-xub/obsidian-paper-library/releases/latest";
+const PAPER_LIBRARY_RELEASES_API = "https://api.github.com/repos/jzjizhe/obsidian-paper-library/releases/latest";
 const PAPER_LIBRARY_UPDATE_FILES = new Set([
   "main.js",
   "manifest.json",

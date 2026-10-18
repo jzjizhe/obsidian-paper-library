@@ -8,7 +8,7 @@
 
 从收藏论文到勾画原文，从连接想法到追问整篇文档。一个插件，一条完整的研究工作流。
 
-[![Version](https://img.shields.io/badge/version-0.42.3-2563d8?style=flat-square)](https://github.com/Lyle-xub/obsidian-paper-library/releases)
+[![Version](https://img.shields.io/badge/version-0.43.0-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.5%2B-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![Platforms](https://img.shields.io/badge/platforms-desktop%20%7C%20mobile-24415e?style=flat-square)](#平台支持)
 [![License](https://img.shields.io/badge/license-MIT-2f7a61?style=flat-square)](LICENSE)
@@ -135,7 +135,7 @@ Paper Composer 是 Paper Library 内置的智能写作与研究侧栏。它与�
 
 ### 手动安装
 
-1. 从 [GitHub Releases](https://github.com/Lyle-xub/obsidian-paper-library/releases/latest) 下载 `paper-library-版本号.zip`。
+1. 从 [GitHub Releases](https://github.com/jzjizhe/obsidian-paper-library/releases/latest) 下载 `paper-library-版本号.zip`。
 2. 解压后，把完整的 `paper-library` 文件夹放到 `<你的 Vault>/.obsidian/plugins`下；
 3. 重载 Obsidian，然后在「设置 → 第三方插件」中启用 **Paper Library**。
 4. 点击左侧 ribbon 的 Library 图标，或运行命令 `Open paper library`。
