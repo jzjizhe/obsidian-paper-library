@@ -8,6 +8,12 @@
 
 从收藏论文到勾画原文，从连接想法到追问整篇文档。一个插件，一条完整的研究工作流。
 
+> **Fork 说明**
+>
+> 这是 [Lyle-xub/obsidian-paper-library](https://github.com/Lyle-xub/obsidian-paper-library) 的社区 Fork，由 [jzjizhe](https://github.com/jzjizhe) 维护。原项目及版权归 © 2026 Lyle 所有；本 Fork 的修改不代表原作者的观点，也未获得原作者的官方背书。
+>
+> 本 Fork 主要增加了原生 PDF 阅读器的标注增强（撤销/重做、画笔/形状写回、文本框修复等），并把阅读器代码拆分到独立模块。插件自更新检查指向本 Fork 的 Releases。
+
 [![Version](https://img.shields.io/badge/version-0.43.0-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.5%2B-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![Platforms](https://img.shields.io/badge/platforms-desktop%20%7C%20mobile-24415e?style=flat-square)](#平台支持)
@@ -140,6 +146,8 @@ Paper Composer 是 Paper Library 内置的智能写作与研究侧栏。它与�
 3. 重载 Obsidian，然后在「设置 → 第三方插件」中启用 **Paper Library**。
 4. 点击左侧 ribbon 的 Library 图标，或运行命令 `Open paper library`。
 
+> **注意**：本 Fork 与上游使用相同的插件 ID `paper-library`。如果你之前安装过原版，安装本 Fork 会替换原版插件及其设置；升级前建议先备份 `.obsidian/plugins/paper-library/`。本 Fork 的「插件更新」只会从 `jzjizhe/obsidian-paper-library` 检查新版本。
+
 从不含内置更新器的旧版本升级时，也需要按上面步骤手动覆盖一次完整文件夹。此后打开「Paper Library 设置 → 插件更新」即可检查并一键安装新版本；更新器会保留设置、论文数据、本地模型和缓存，并自动重新加载插件。
 
 ## 浏览器一键导入
@@ -180,7 +188,7 @@ npm test
 
 ## License
 
-[MIT](LICENSE) © 2026 Lyle
+[MIT](LICENSE) © 2026 Lyle；Fork 修改部分 © 2026 jzjizhe
 
 <div align="center">
 
