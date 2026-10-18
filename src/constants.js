@@ -97,6 +97,7 @@ const DEFAULT_SETTINGS = {
   pdfOpenPosition: "last",
   pdfTextBoxFontSize: 18,
   pdfTextBoxTextColor: "orange",
+  developerMode: false,
   researchWorkspaceHeading: "Research Workspace",
   defaultHighlightColor: "yellow",
   tableColumnWidths: Object.fromEntries(Object.entries(PAPER_TABLE_COLUMNS).map(([key, value]) => [key, value.width])),

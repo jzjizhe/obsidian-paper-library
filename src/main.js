@@ -424,332 +424,334 @@ class PaperLibraryPlugin extends Plugin {
       }
     });
     this.addCommand({ id: "add-paper", name: "Add paper", callback: () => new AddPaperModal(this.app, this).open() });
-    this.addCommand({
-      id: "merge-overlapping-highlights",
-      name: "合并重叠的重复标注",
-      callback: async () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const file = leaf?.view?.file;
-        const paper = file ? this.getPaperForPdfFile(file) : null;
-        if (!file || !paper) {
-          new Notice("请先打开一篇已加入论文库的 PDF");
-          return;
-        }
-        const path = normalizePath(file.path);
-        const marks = (this.ensureResearchWorkspace(paper).highlights || [])
-          .filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path)
-          .sort((first, second) => String(first.createdAt || "").localeCompare(String(second.createdAt || "")));
-        const kept = [];
-        const duplicates = [];
-        for (const mark of marks) {
-          const union = this.getPdfRectsUnion(mark.pdfRects);
-          if (!union) { kept.push(mark); continue; }
-          const overlap = kept.find((other) => {
-            if (Number(other.page) !== Number(mark.page)) return false;
-            const otherUnion = this.getPdfRectsUnion(other.pdfRects);
-            return otherUnion ? this.pdfRectsOverlapRatio(union, otherUnion) >= 0.9 : false;
-          });
-          if (overlap) duplicates.push(mark);
-          else kept.push(mark);
-        }
-        if (!duplicates.length) {
-          new Notice("没有发现重叠的重复标注");
-          return;
-        }
-        for (const mark of duplicates) {
-          try {
-            await this.removeCanvasHighlights(paper, [mark.id]);
-          } catch (error) {
-            console.error("Paper Library: failed to remove duplicate highlight", error);
-          }
-        }
-        new Notice(`已合并 ${duplicates.length} 条重叠标注（保留最新的一条），请确认效果`);
-      }
-    });
-    this.addCommand({
-      id: "rewrite-pdf-annotations",
-      name: "重写 PDF 内嵌批注（去除外观流）",
-      callback: async () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const file = leaf?.view?.file;
-        const paper = file ? this.getPaperForPdfFile(file) : null;
-        if (!file || !paper) {
-          new Notice("请先打开一篇已加入论文库的 PDF");
-          return;
-        }
-        const path = normalizePath(file.path);
-        const workspace = this.ensureResearchWorkspace(paper);
-        const marks = [
-          ...(workspace.highlights || []),
-          ...(paper.annotations || []),
-          ...(workspace.inkStrokes || []),
-          ...(workspace.pdfShapes || [])
-        ].filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path);
-        let written = 0;
-        try {
-          await this.mutateLocalPdf(path, async (document) => {
-            // 一次写入内完成：清空本插件的全部注释，再按库内标注重建（不带外观流）
-            document.getPages().forEach((page) => {
-              const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
-              if (!annots) return;
-              for (let index = annots.size() - 1; index >= 0; index -= 1) {
-                const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
-                if (!dictionary) continue;
-                const value = this.readPdfAnnotationString(document, dictionary, "NM");
-                if (value.startsWith("paperlib:")) annots.remove(index);
-              }
-            });
-            marks.forEach((mark) => {
-              if (this.writeLocalPdfAnnotation(document, mark)) written += 1;
-            });
-            return true;
-          });
-        } catch (error) {
-          console.error("Paper Library: failed to rewrite PDF annotations", error);
-          new Notice(`重写失败：${error.message || error}`);
-          return;
-        }
-        new Notice(`已重写 ${written} 条批注（去除外观流），并清理孤儿注释`);
-      }
-    });
-    this.addCommand({
-      id: "debug-hide-annotation-layers",
-      name: "调试：显示/隐藏所有注释层容器",
-      callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const container = leaf?.view?.containerEl;
-        if (!container) {
-          new Notice("请先打开一个 PDF");
-          return;
-        }
-        this.nativeAnnotationLayersHidden = !this.nativeAnnotationLayersHidden;
-        const layers = [...container.querySelectorAll(".annotationLayer, .annotationEditorLayer")];
-        layers.forEach((layer) => { layer.style.display = this.nativeAnnotationLayersHidden ? "none" : ""; });
-        new Notice(this.nativeAnnotationLayersHidden
-          ? `已隐藏 ${layers.length} 个注释层容器（高亮若仍可见则说明画在页面画布上）`
-          : "已恢复注释层容器");
-      }
-    });
-    this.addCommand({
-      id: "debug-toggle-embedded-highlights",
-      name: "调试：显示/隐藏所有内嵌高亮注释",
-      callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const container = leaf?.view?.containerEl;
-        if (!container) {
-          new Notice("请先打开一个 PDF");
-          return;
-        }
-        this.nativeEmbeddedHidden = !this.nativeEmbeddedHidden;
-        container.querySelectorAll(".highlightAnnotation").forEach((element) => {
-          element.style.display = this.nativeEmbeddedHidden ? "none" : "";
-        });
-        new Notice(this.nativeEmbeddedHidden
-          ? `已隐藏 ${container.querySelectorAll(".highlightAnnotation").length} 个内嵌高亮注释元素`
-          : "已恢复内嵌高亮注释显示");
-      }
-    });
-    this.addCommand({
-      id: "debug-toggle-pdf-highlight-overlay",
-      name: "调试：显示/隐藏高亮覆盖层",
-      callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const container = leaf?.view?.containerEl;
-        if (!container) {
-          new Notice("请先打开一个 PDF");
-          return;
-        }
-        this.nativeOverlayHidden = !this.nativeOverlayHidden;
-        container.querySelectorAll(".paperlib-native-pdf-highlight-layer").forEach((layer) => {
-          layer.style.display = this.nativeOverlayHidden ? "none" : "";
-        });
-        new Notice(this.nativeOverlayHidden ? "已隐藏高亮覆盖层（PDF 自身渲染仍可见则说明注释被画进页面）" : "已恢复高亮覆盖层");
-      }
-    });
-    this.addCommand({
-      id: "debug-insert-textbox",
-      name: "调试：在当前 PDF 插入测试文本框",
-      callback: async () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const file = leaf?.view?.file;
-        const paper = file ? this.getPaperForPdfFile(file) : null;
-        if (!file || !paper) {
-          new Notice("没有可用的 PDF（或未加入论文库）");
-          return;
-        }
-        try {
-          const mark = await this.createPdfTextBox(paper, file, 1, { x: 0.5, y: 0.2, width: 0.02 }, 18, "orange");
-          new Notice(mark ? `已插入测试文本框：${mark.id}` : "插入返回空（参数校验未通过）");
-        } catch (error) {
-          console.error("Paper Library: debug textbox insert failed", error);
-          new Notice(`插入失败：${error.message || error}`);
-        }
-      }
-    });
-    this.addCommand({
-      id: "debug-native-pdf-annotations",
-      name: "调试：输出 PDF 注释层结构",
-      callback: async () => {
-        const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
-        const active = this.app.workspace.activeLeaf;
-        const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
-        const file = leaf?.view?.file;
-        const container = leaf?.view?.containerEl;
-        if (!file || !container) {
-          console.warn("[Paper Library debug] 没有激活的 PDF 视图");
-          new Notice("请先打开一个 PDF 再运行诊断");
-          return;
-        }
-        const pageEls = [...container.querySelectorAll(".page")];
-        const diagnostics = {
-          file: file.path,
-          pageCount: pageEls.length,
-          containerClasses: String(container.className || ""),
-          containerChildren: [...container.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`).slice(0, 20),
-          canvasCount: container.querySelectorAll("canvas").length,
-          annotationLikeElements: [...container.querySelectorAll("[class*='annot' i], [data-annotation-id]")]
-            .slice(0, 20)
-            .map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}#${el.getAttribute?.("data-annotation-id") || ""}`),
-          highlightAnnotationCount: container.querySelectorAll(".highlightAnnotation").length,
-          annotationLayers: [...container.querySelectorAll(".annotationLayer")].map((layer) => ({
-            parentClass: String(layer.parentElement?.className || ""),
-            pageNumber: layer.closest(".page")?.dataset?.pageNumber || layer.parentElement?.dataset?.pageNumber || "",
-            sectionCount: layer.querySelectorAll("section").length,
-            highlightIds: [...layer.querySelectorAll(".highlightAnnotation")].map((el) => el.getAttribute("data-annotation-id"))
-          })),
-          pages: []
-        };
-        let ownIds = new Map();
-        try {
-          ownIds = await this.getNativePdfOwnAnnotations(file);
-        } catch (error) {
-          diagnostics.ownIdsError = String(error?.message || error);
-        }
-        diagnostics.ownIds = [...ownIds.entries()].map(([page, list]) => [page, list.map((annotation) => annotation.id)]);
-        {
-          const paper = this.getPaperForPdfFile(file);
-          const highlights = paper ? (this.ensureResearchWorkspace(paper).highlights || []) : [];
-          const path = normalizePath(file.path);
-          diagnostics.libraryHighlights = highlights
-            .filter((mark) => normalizePath(mark.pdfPath || paper?.pdfPath || "") === path)
-            .map((mark) => ({
-              id: mark.id,
-              page: mark.page,
-              color: mark.color,
-              rects: (mark.pdfRects || []).map((item) => (item.rect || []).map((value) => Math.round(value))),
-              createdAt: mark.createdAt || ""
-            }));
-        }
-        try {
-          const buffer = await this.readPdfBinary(file);
-          const pdfjs = await loadPdfJs();
-          const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-          try {
-            diagnostics.highlightAnnotations = [];
-            for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
-              const page = await document.getPage(pageNumber);
-              const annotations = await page.getAnnotations();
-              (annotations || []).forEach((annotation) => {
-                if (String(annotation.subtype || "").toLowerCase() !== "highlight") return;
-                diagnostics.highlightAnnotations.push({
-                  page: pageNumber,
-                  id: annotation.id,
-                  titleStr: annotation.titleObj?.str || "",
-                  hasAppearance: Boolean(annotation.hasAppearance),
-                  hasOwnCanvas: Boolean(annotation.hasOwnCanvas),
-                  rect: (annotation.rect || []).map((value) => Math.round(value)),
-                  keys: Object.keys(annotation)
-                });
-              });
-            }
-          } finally {
-            await document.destroy?.();
-          }
-        } catch (error) {
-          diagnostics.highlightAnnotationsError = String(error?.message || error);
-        }
-        {
-          const allOwn = new Set();
-          for (const list of ownIds.values()) for (const annotation of list) allOwn.add(String(annotation.id));
-          diagnostics.ownDomHits = [...container.querySelectorAll("[data-annotation-id]")]
-            .map((el) => ({
-              id: el.getAttribute("data-annotation-id"),
-              className: String(el.className?.baseVal ?? el.className),
-              display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
-              rect: (() => { const r = el.getBoundingClientRect?.(); return r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null; })()
-            }))
-            .filter((item) => allOwn.has(item.id));
-          diagnostics.ownIdsMissingDom = [...allOwn].filter((id) => !diagnostics.ownDomHits.some((hit) => hit.id === id));
-        }
-        try {
-          const buffer = await this.readPdfBinary(file);
-          const pdfjs = await loadPdfJs();
-          const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-          try {
-            const page = await document.getPage(1);
-            const annotations = await page.getAnnotations();
-            diagnostics.annotationSample = (annotations || []).slice(0, 5).map((annotation) => ({
-              id: annotation.id,
-              subtype: annotation.subtype,
-              titleStr: annotation.titleObj?.str || "",
-              nm: annotation.nm || "",
-              keys: Object.keys(annotation)
-            }));
-          } finally {
-            await document.destroy?.();
-          }
-        } catch (error) {
-          diagnostics.annotationSampleError = String(error?.message || error);
-        }
-        pageEls.slice(0, 3).forEach((pageEl) => {
-          const pageNumber = pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number");
-          const annotationLayer = pageEl.querySelector(".annotationLayer");
-          const annotationEls = [...pageEl.querySelectorAll("[data-annotation-id]")];
-          const overlay = pageEl.querySelector(".paperlib-native-pdf-highlight-layer");
-          diagnostics.pages.push({
-            pageNumber,
-            className: pageEl.className,
-            children: [...pageEl.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`),
-            annotationLayerPresent: Boolean(annotationLayer),
-            annotationLayerClass: annotationLayer?.className || "",
-            annotationElements: annotationEls.slice(0, 20).map((el) => ({
-              tag: el.tagName,
-              className: String(el.className?.baseVal ?? el.className),
-              annotationId: el.dataset?.annotationId || el.getAttribute?.("data-annotation-id") || "",
-              display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
-              rect: (() => {
-                const rect = el.getBoundingClientRect?.();
-                return rect ? { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : null;
-              })()
-            })),
-            highlightPaths: overlay?.querySelectorAll?.("path")?.length || 0,
-            overlaySignature: overlay?.dataset?.signature || ""
-          });
-        });
-        console.log("[Paper Library debug] PDF 注释层结构", diagnostics);
-        console.log(JSON.stringify(diagnostics, null, 2));
-        if (navigator.clipboard?.writeText) {
-          try {
-            await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
-            new Notice("诊断信息已输出到控制台并复制到剪贴板");
+    if (this.settings.developerMode) {
+      this.addCommand({
+        id: "merge-overlapping-highlights",
+        name: "合并重叠的重复标注",
+        callback: async () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const file = leaf?.view?.file;
+          const paper = file ? this.getPaperForPdfFile(file) : null;
+          if (!file || !paper) {
+            new Notice("请先打开一篇已加入论文库的 PDF");
             return;
-          } catch (error) { /* 剪贴板不可用时仅输出控制台 */ }
+          }
+          const path = normalizePath(file.path);
+          const marks = (this.ensureResearchWorkspace(paper).highlights || [])
+            .filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path)
+            .sort((first, second) => String(first.createdAt || "").localeCompare(String(second.createdAt || "")));
+          const kept = [];
+          const duplicates = [];
+          for (const mark of marks) {
+            const union = this.getPdfRectsUnion(mark.pdfRects);
+            if (!union) { kept.push(mark); continue; }
+            const overlap = kept.find((other) => {
+              if (Number(other.page) !== Number(mark.page)) return false;
+              const otherUnion = this.getPdfRectsUnion(other.pdfRects);
+              return otherUnion ? this.pdfRectsOverlapRatio(union, otherUnion) >= 0.9 : false;
+            });
+            if (overlap) duplicates.push(mark);
+            else kept.push(mark);
+          }
+          if (!duplicates.length) {
+            new Notice("没有发现重叠的重复标注");
+            return;
+          }
+          for (const mark of duplicates) {
+            try {
+              await this.removeCanvasHighlights(paper, [mark.id]);
+            } catch (error) {
+              console.error("Paper Library: failed to remove duplicate highlight", error);
+            }
+          }
+          new Notice(`已合并 ${duplicates.length} 条重叠标注（保留最新的一条），请确认效果`);
         }
-        new Notice("诊断信息已输出到开发者控制台");
-      }
-    });
+      });
+      this.addCommand({
+        id: "rewrite-pdf-annotations",
+        name: "重写 PDF 内嵌批注（去除外观流）",
+        callback: async () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const file = leaf?.view?.file;
+          const paper = file ? this.getPaperForPdfFile(file) : null;
+          if (!file || !paper) {
+            new Notice("请先打开一篇已加入论文库的 PDF");
+            return;
+          }
+          const path = normalizePath(file.path);
+          const workspace = this.ensureResearchWorkspace(paper);
+          const marks = [
+            ...(workspace.highlights || []),
+            ...(paper.annotations || []),
+            ...(workspace.inkStrokes || []),
+            ...(workspace.pdfShapes || [])
+          ].filter((mark) => normalizePath(mark.pdfPath || paper.pdfPath || "") === path);
+          let written = 0;
+          try {
+            await this.mutateLocalPdf(path, async (document) => {
+              // 一次写入内完成：清空本插件的全部注释，再按库内标注重建（不带外观流）
+              document.getPages().forEach((page) => {
+                const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+                if (!annots) return;
+                for (let index = annots.size() - 1; index >= 0; index -= 1) {
+                  const dictionary = document.context.lookupMaybe(annots.get(index), PDFDict);
+                  if (!dictionary) continue;
+                  const value = this.readPdfAnnotationString(document, dictionary, "NM");
+                  if (value.startsWith("paperlib:")) annots.remove(index);
+                }
+              });
+              marks.forEach((mark) => {
+                if (this.writeLocalPdfAnnotation(document, mark)) written += 1;
+              });
+              return true;
+            });
+          } catch (error) {
+            console.error("Paper Library: failed to rewrite PDF annotations", error);
+            new Notice(`重写失败：${error.message || error}`);
+            return;
+          }
+          new Notice(`已重写 ${written} 条批注（去除外观流），并清理孤儿注释`);
+        }
+      });
+      this.addCommand({
+        id: "debug-hide-annotation-layers",
+        name: "调试：显示/隐藏所有注释层容器",
+        callback: () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const container = leaf?.view?.containerEl;
+          if (!container) {
+            new Notice("请先打开一个 PDF");
+            return;
+          }
+          this.nativeAnnotationLayersHidden = !this.nativeAnnotationLayersHidden;
+          const layers = [...container.querySelectorAll(".annotationLayer, .annotationEditorLayer")];
+          layers.forEach((layer) => { layer.style.display = this.nativeAnnotationLayersHidden ? "none" : ""; });
+          new Notice(this.nativeAnnotationLayersHidden
+            ? `已隐藏 ${layers.length} 个注释层容器（高亮若仍可见则说明画在页面画布上）`
+            : "已恢复注释层容器");
+        }
+      });
+      this.addCommand({
+        id: "debug-toggle-embedded-highlights",
+        name: "调试：显示/隐藏所有内嵌高亮注释",
+        callback: () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const container = leaf?.view?.containerEl;
+          if (!container) {
+            new Notice("请先打开一个 PDF");
+            return;
+          }
+          this.nativeEmbeddedHidden = !this.nativeEmbeddedHidden;
+          container.querySelectorAll(".highlightAnnotation").forEach((element) => {
+            element.style.display = this.nativeEmbeddedHidden ? "none" : "";
+          });
+          new Notice(this.nativeEmbeddedHidden
+            ? `已隐藏 ${container.querySelectorAll(".highlightAnnotation").length} 个内嵌高亮注释元素`
+            : "已恢复内嵌高亮注释显示");
+        }
+      });
+      this.addCommand({
+        id: "debug-toggle-pdf-highlight-overlay",
+        name: "调试：显示/隐藏高亮覆盖层",
+        callback: () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const container = leaf?.view?.containerEl;
+          if (!container) {
+            new Notice("请先打开一个 PDF");
+            return;
+          }
+          this.nativeOverlayHidden = !this.nativeOverlayHidden;
+          container.querySelectorAll(".paperlib-native-pdf-highlight-layer").forEach((layer) => {
+            layer.style.display = this.nativeOverlayHidden ? "none" : "";
+          });
+          new Notice(this.nativeOverlayHidden ? "已隐藏高亮覆盖层（PDF 自身渲染仍可见则说明注释被画进页面）" : "已恢复高亮覆盖层");
+        }
+      });
+      this.addCommand({
+        id: "debug-insert-textbox",
+        name: "调试：在当前 PDF 插入测试文本框",
+        callback: async () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const file = leaf?.view?.file;
+          const paper = file ? this.getPaperForPdfFile(file) : null;
+          if (!file || !paper) {
+            new Notice("没有可用的 PDF（或未加入论文库）");
+            return;
+          }
+          try {
+            const mark = await this.createPdfTextBox(paper, file, 1, { x: 0.5, y: 0.2, width: 0.02 }, 18, "orange");
+            new Notice(mark ? `已插入测试文本框：${mark.id}` : "插入返回空（参数校验未通过）");
+          } catch (error) {
+            console.error("Paper Library: debug textbox insert failed", error);
+            new Notice(`插入失败：${error.message || error}`);
+          }
+        }
+      });
+      this.addCommand({
+        id: "debug-native-pdf-annotations",
+        name: "调试：输出 PDF 注释层结构",
+        callback: async () => {
+          const leaves = this.app.workspace.getLeavesOfType?.("pdf") || [];
+          const active = this.app.workspace.activeLeaf;
+          const leaf = leaves.find((item) => item === active) || leaves[leaves.length - 1];
+          const file = leaf?.view?.file;
+          const container = leaf?.view?.containerEl;
+          if (!file || !container) {
+            console.warn("[Paper Library debug] 没有激活的 PDF 视图");
+            new Notice("请先打开一个 PDF 再运行诊断");
+            return;
+          }
+          const pageEls = [...container.querySelectorAll(".page")];
+          const diagnostics = {
+            file: file.path,
+            pageCount: pageEls.length,
+            containerClasses: String(container.className || ""),
+            containerChildren: [...container.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`).slice(0, 20),
+            canvasCount: container.querySelectorAll("canvas").length,
+            annotationLikeElements: [...container.querySelectorAll("[class*='annot' i], [data-annotation-id]")]
+              .slice(0, 20)
+              .map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}#${el.getAttribute?.("data-annotation-id") || ""}`),
+            highlightAnnotationCount: container.querySelectorAll(".highlightAnnotation").length,
+            annotationLayers: [...container.querySelectorAll(".annotationLayer")].map((layer) => ({
+              parentClass: String(layer.parentElement?.className || ""),
+              pageNumber: layer.closest(".page")?.dataset?.pageNumber || layer.parentElement?.dataset?.pageNumber || "",
+              sectionCount: layer.querySelectorAll("section").length,
+              highlightIds: [...layer.querySelectorAll(".highlightAnnotation")].map((el) => el.getAttribute("data-annotation-id"))
+            })),
+            pages: []
+          };
+          let ownIds = new Map();
+          try {
+            ownIds = await this.getNativePdfOwnAnnotations(file);
+          } catch (error) {
+            diagnostics.ownIdsError = String(error?.message || error);
+          }
+          diagnostics.ownIds = [...ownIds.entries()].map(([page, list]) => [page, list.map((annotation) => annotation.id)]);
+          {
+            const paper = this.getPaperForPdfFile(file);
+            const highlights = paper ? (this.ensureResearchWorkspace(paper).highlights || []) : [];
+            const path = normalizePath(file.path);
+            diagnostics.libraryHighlights = highlights
+              .filter((mark) => normalizePath(mark.pdfPath || paper?.pdfPath || "") === path)
+              .map((mark) => ({
+                id: mark.id,
+                page: mark.page,
+                color: mark.color,
+                rects: (mark.pdfRects || []).map((item) => (item.rect || []).map((value) => Math.round(value))),
+                createdAt: mark.createdAt || ""
+              }));
+          }
+          try {
+            const buffer = await this.readPdfBinary(file);
+            const pdfjs = await loadPdfJs();
+            const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+            try {
+              diagnostics.highlightAnnotations = [];
+              for (let pageNumber = 1; pageNumber <= (document.numPages || 0); pageNumber += 1) {
+                const page = await document.getPage(pageNumber);
+                const annotations = await page.getAnnotations();
+                (annotations || []).forEach((annotation) => {
+                  if (String(annotation.subtype || "").toLowerCase() !== "highlight") return;
+                  diagnostics.highlightAnnotations.push({
+                    page: pageNumber,
+                    id: annotation.id,
+                    titleStr: annotation.titleObj?.str || "",
+                    hasAppearance: Boolean(annotation.hasAppearance),
+                    hasOwnCanvas: Boolean(annotation.hasOwnCanvas),
+                    rect: (annotation.rect || []).map((value) => Math.round(value)),
+                    keys: Object.keys(annotation)
+                  });
+                });
+              }
+            } finally {
+              await document.destroy?.();
+            }
+          } catch (error) {
+            diagnostics.highlightAnnotationsError = String(error?.message || error);
+          }
+          {
+            const allOwn = new Set();
+            for (const list of ownIds.values()) for (const annotation of list) allOwn.add(String(annotation.id));
+            diagnostics.ownDomHits = [...container.querySelectorAll("[data-annotation-id]")]
+              .map((el) => ({
+                id: el.getAttribute("data-annotation-id"),
+                className: String(el.className?.baseVal ?? el.className),
+                display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
+                rect: (() => { const r = el.getBoundingClientRect?.(); return r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null; })()
+              }))
+              .filter((item) => allOwn.has(item.id));
+            diagnostics.ownIdsMissingDom = [...allOwn].filter((id) => !diagnostics.ownDomHits.some((hit) => hit.id === id));
+          }
+          try {
+            const buffer = await this.readPdfBinary(file);
+            const pdfjs = await loadPdfJs();
+            const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
+            try {
+              const page = await document.getPage(1);
+              const annotations = await page.getAnnotations();
+              diagnostics.annotationSample = (annotations || []).slice(0, 5).map((annotation) => ({
+                id: annotation.id,
+                subtype: annotation.subtype,
+                titleStr: annotation.titleObj?.str || "",
+                nm: annotation.nm || "",
+                keys: Object.keys(annotation)
+              }));
+            } finally {
+              await document.destroy?.();
+            }
+          } catch (error) {
+            diagnostics.annotationSampleError = String(error?.message || error);
+          }
+          pageEls.slice(0, 3).forEach((pageEl) => {
+            const pageNumber = pageEl.dataset?.pageNumber || pageEl.getAttribute?.("data-page-number");
+            const annotationLayer = pageEl.querySelector(".annotationLayer");
+            const annotationEls = [...pageEl.querySelectorAll("[data-annotation-id]")];
+            const overlay = pageEl.querySelector(".paperlib-native-pdf-highlight-layer");
+            diagnostics.pages.push({
+              pageNumber,
+              className: pageEl.className,
+              children: [...pageEl.children].map((el) => `${el.tagName}.${String(el.className?.baseVal ?? el.className)}`),
+              annotationLayerPresent: Boolean(annotationLayer),
+              annotationLayerClass: annotationLayer?.className || "",
+              annotationElements: annotationEls.slice(0, 20).map((el) => ({
+                tag: el.tagName,
+                className: String(el.className?.baseVal ?? el.className),
+                annotationId: el.dataset?.annotationId || el.getAttribute?.("data-annotation-id") || "",
+                display: el.ownerDocument?.defaultView?.getComputedStyle?.(el)?.display || "",
+                rect: (() => {
+                  const rect = el.getBoundingClientRect?.();
+                  return rect ? { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : null;
+                })()
+              })),
+              highlightPaths: overlay?.querySelectorAll?.("path")?.length || 0,
+              overlaySignature: overlay?.dataset?.signature || ""
+            });
+          });
+          console.log("[Paper Library debug] PDF 注释层结构", diagnostics);
+          console.log(JSON.stringify(diagnostics, null, 2));
+          if (navigator.clipboard?.writeText) {
+            try {
+              await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+              new Notice("诊断信息已输出到控制台并复制到剪贴板");
+              return;
+            } catch (error) { /* 剪贴板不可用时仅输出控制台 */ }
+          }
+          new Notice("诊断信息已输出到开发者控制台");
+        }
+      });
+    }
     this.addCommand({ id: "organize-paper-files", name: "Organize paper PDFs and notes", callback: () => this.organizeLibraryFiles(true) });
     this.addCommand({
       id: "flush-pdf-annotation-writeback",

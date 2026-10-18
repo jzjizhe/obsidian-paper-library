@@ -770,6 +770,16 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           this.plugin.settings.pdfTextBoxFontSize = value;
           await this.plugin.saveSettings();
         }));
+    containerEl.createEl("h3", { text: "开发者" });
+    new Setting(containerEl)
+      .setName("显示调试命令")
+      .setDesc("在命令面板显示 debug-*、重写 PDF 内嵌批注等开发者命令。修改后需要重新加载插件。")
+      .addToggle((toggle) => toggle
+        .setValue(Boolean(this.plugin.settings.developerMode))
+        .onChange(async (value) => {
+          this.plugin.settings.developerMode = value;
+          await this.plugin.saveSettings();
+        }));
     new Setting(containerEl)
       .setName("研究画布笔记标题")
       .setDesc("摘录卡片、想法与连接自动同步到论文笔记中的此标题下。")
