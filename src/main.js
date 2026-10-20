@@ -902,7 +902,10 @@ class PaperLibraryPlugin extends Plugin {
     this.pdfInkRegionDragCleanup = null;
     this.pdfInkContextMenuCleanup?.();
     this.pdfInkContextMenuCleanup = null;
-    this.nativePdfToolbarObserver?.disconnect();
+    (this.nativePdfToolbarObservers || []).forEach(({ observer }) => observer?.disconnect?.());
+    this.nativePdfToolbarObservers = [];
+    if (this.nativePdfMountRetryTimer) globalThis.clearTimeout(this.nativePdfMountRetryTimer);
+    this.nativePdfMountRetryTimer = null;
     (this.nativePdfBindingList || []).forEach(({ container, pointerDown, pointerUp, contextMenu, dragStart, click, scroll, pointerMove, keyDown, keyDownDoc }) => {
       container.removeEventListener("pointerdown", pointerDown, true);
       container.removeEventListener("pointerup", pointerUp, true);

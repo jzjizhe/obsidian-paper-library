@@ -19,6 +19,7 @@ const toolbarMethods = {
     if (this.app.workspace?.on && this.registerEvent) {
       this.registerEvent(this.app.workspace.on("layout-change", mount));
       this.registerEvent(this.app.workspace.on("active-leaf-change", mount));
+      this.registerEvent(this.app.workspace.on("file-open", mount));
       // 离开某个 PDF 视图时，把它积累的待写回批注批量写入（重载发生在看不见的时候）
       this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
         const activePath = normalizePath(this.app.workspace.getActiveFile?.()?.path || "");
@@ -41,18 +42,72 @@ const toolbarMethods = {
         if (document.visibilityState === "hidden") flushPending();
       });
     }
-    this.nativePdfToolbarObserver = new MutationObserver(mount);
-    this.nativePdfToolbarObserver.observe(document.body, { childList: true, subtree: true });
-    if (this.register) this.register(() => this.nativePdfToolbarObserver?.disconnect());
+      // 主窗口和弹出窗口都要监听：PDF 工具栏可能在任意一个 document 里异步创建
+    this.nativePdfToolbarObservers = this.nativePdfToolbarObservers || [];
+    const observeDocument = (doc) => {
+      if (!doc?.body || this.nativePdfToolbarObservers.some((entry) => entry.doc === doc)) return;
+      const Observer = doc.defaultView?.MutationObserver || MutationObserver;
+      const observer = new Observer(mount);
+      observer.observe(doc.body, { childList: true, subtree: true });
+      this.nativePdfToolbarObservers.push({ doc, observer });
+    };
+    observeDocument(document);
+    // 插件加载前已经存在的弹出窗口没有 window-open 事件，补一次观察
+    const existingWindows = this.app.workspace?.windowManager?.windows;
+    if (Array.isArray(existingWindows)) {
+      existingWindows.forEach((entry) => observeDocument(entry?.doc || entry?.win?.document));
+    }
+    if (this.app.workspace?.on && this.registerEvent) {
+      this.registerEvent(this.app.workspace.on("window-open", (workspaceWindow, win) => {
+        const doc = win?.document
+          || workspaceWindow?.doc
+          || workspaceWindow?.win?.document
+          || workspaceWindow?.window?.document;
+        if (doc) observeDocument(doc);
+        mount();
+      }));
+    }
+    if (this.register) this.register(() => {
+      (this.nativePdfToolbarObservers || []).forEach(({ observer }) => observer?.disconnect?.());
+      this.nativePdfToolbarObservers = [];
+      if (this.nativePdfMountRetryTimer) globalThis.clearTimeout(this.nativePdfMountRetryTimer);
+      this.nativePdfMountRetryTimer = null;
+    });
     mount();
+  },
+
+  scheduleNativePdfMountRetry() {
+    if (this.nativePdfMountRetryTimer) return;
+    this.nativePdfMountRetryCount = (this.nativePdfMountRetryCount || 0) + 1;
+    // 约 10 秒内持续重试，覆盖 PDF 文件加载和弹出窗口初始化的延迟
+    if (this.nativePdfMountRetryCount > 40) return;
+    this.nativePdfMountRetryTimer = globalThis.setTimeout(() => {
+      this.nativePdfMountRetryTimer = null;
+      this.mountNativePdfToolbars();
+    }, 250);
   },
 
   mountNativePdfToolbars() {
     const leaves = this.app.workspace?.getLeavesOfType?.("pdf") || [];
+    if (!leaves.length) {
+      this.nativePdfMountRetryCount = 0;
+      if (this.nativePdfMountRetryTimer) globalThis.clearTimeout(this.nativePdfMountRetryTimer);
+      this.nativePdfMountRetryTimer = null;
+      return;
+    }
+    let missingToolbar = false;
     leaves.forEach((leaf) => {
       const container = leaf.view?.containerEl;
-      const toolbar = container?.querySelector?.(".pdf-toolbar");
-      if (!container || !toolbar) return;
+      if (!container) {
+        missingToolbar = true;
+        return;
+      }
+      if (container.isConnected === false) return;
+      const toolbar = container.querySelector?.(".pdf-toolbar");
+      if (!toolbar) {
+        missingToolbar = true;
+        return;
+      }
       const file = leaf.view?.file;
       const paper = file ? this.getPaperForPdfFile(file) : null;
       this.nativePdfEmptyTextBoxCleanup = this.nativePdfEmptyTextBoxCleanup || new Set();
@@ -606,6 +661,8 @@ const toolbarMethods = {
         this.nativePdfBindingList.push(binding);
       }
     });
+    if (missingToolbar) this.scheduleNativePdfMountRetry();
+    else this.nativePdfMountRetryCount = 0;
   },
 
   handleNativePdfSelectionDrag(event, leaf, container) {
