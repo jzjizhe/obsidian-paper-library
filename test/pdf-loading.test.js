@@ -1231,7 +1231,7 @@ async function run() {
         { target: { closest: () => textLayer } }, { view: { file } }, { contains: () => true }, state
       );
       assert.equal(writes, 1, "selection geometry and annotation saving must both survive EPERM");
-      assert.equal(reads, 2);
+      assert.ok(reads >= 2, "EPERM reads are retried before falling back to the resource URL");
       assert.equal(state.busy, false);
       assert.equal(selectionCleared, true);
       assert.equal(destroyed, 1);

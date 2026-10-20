@@ -1418,7 +1418,7 @@ class PaperLibraryPlugin extends Plugin {
         byteLength: file.stat?.size || 0,
         key: `vault:${path}`,
         keepBytes: false
-      }, () => this.app.vault.readBinary(file));
+      }, () => this.readPdfBinary(file));
       targetTab.dom?.inputEl?.focus?.();
       return true;
     }
@@ -1495,7 +1495,7 @@ class PaperLibraryPlugin extends Plugin {
       byteLength: file.stat?.size || 0,
       key: `vault:${path}`,
       keepBytes: false
-    }, () => this.app.vault.readBinary(file));
+    }, () => this.readPdfBinary(file));
     tab.dom?.inputEl?.focus?.();
     return true;
   }
@@ -2070,7 +2070,7 @@ class PaperLibraryPlugin extends Plugin {
       byteLength: file.stat?.size || 0,
       key,
       keepBytes: false
-    }, () => this.app.vault.readBinary(file));
+    }, () => this.readPdfBinary(file));
     return true;
   }
 
@@ -3507,7 +3507,7 @@ class PaperLibraryPlugin extends Plugin {
         key: `vault:${file.path}`,
         keepBytes: false,
         linkedPage: Number(attachment.page) || null
-      }, () => this.app.vault.readBinary(file)));
+      }, () => this.readPdfBinary(file)));
     }
     return queued;
   }
@@ -3600,7 +3600,7 @@ class PaperLibraryPlugin extends Plugin {
     if (attachment?.pdfData) return Promise.resolve(base64ToArrayBuffer(attachment.pdfData));
     if (attachment?.path) {
       const file = this.app.vault.getAbstractFileByPath(normalizePath(attachment.path));
-      if (file?.path) return this.app.vault.readBinary(file);
+      if (file?.path) return this.readPdfBinary(file);
     }
     if (attachment?.nativePath) {
       return require("fs").promises.readFile(attachment.nativePath).then((buffer) => (
@@ -4278,7 +4278,7 @@ class PaperLibraryPlugin extends Plugin {
     if (!file?.path) return [];
     const extension = String(file.extension || file.path.split(".").pop() || "").toLocaleLowerCase();
     if (extension === "pdf") {
-      const buffer = await this.app.vault.readBinary(file);
+      const buffer = await this.readPdfBinary(file);
       return [await this.createPdfAIAttachment(buffer, {
         name: file.name,
         path: file.path,
@@ -4341,7 +4341,7 @@ class PaperLibraryPlugin extends Plugin {
         metadataText: descriptor.metadataText || "",
         keepBytes: false,
         linkedPage: Number(descriptor.linkedPage) || null
-      }, () => this.app.vault.readBinary(file));
+      }, () => this.readPdfBinary(file));
       if (attachment) queuedPdfAttachments.push(attachment);
       return attachment;
     };
@@ -4518,7 +4518,7 @@ class PaperLibraryPlugin extends Plugin {
     if (attachment.pdfData) buffer = base64ToArrayBuffer(attachment.pdfData);
     else if (attachment.path) {
       const file = this.app.vault.getAbstractFileByPath(normalizePath(attachment.path));
-      if (file) buffer = await this.app.vault.readBinary(file);
+      if (file) buffer = await this.readPdfBinary(file);
     }
     if (!buffer) throw new Error(`无法重新读取 PDF：${attachment.label || attachment.path || "未知文件"}`);
     const rebuilt = await this.createPdfAIAttachment(buffer, {
@@ -7471,7 +7471,7 @@ class PaperLibraryPlugin extends Plugin {
       try {
         const vaultFile = this.app.vault.getAbstractFileByPath(normalizePath(paper.pdfPath));
         if (!vaultFile) throw new Error("Vault 中找不到已保存的 PDF");
-        const buffer = await this.app.vault.readBinary(vaultFile);
+        const buffer = await this.readPdfBinary(vaultFile);
         entry.local = await this.extractLocalPdfMetadata(buffer, entry.file.name);
         this.applyBatchImportMetadata(paper, entry.local, "PDF 本地元数据");
       } catch (error) {
@@ -9888,7 +9888,7 @@ class PaperLibraryPlugin extends Plugin {
         : null;
       if (pdfFile && pdfFile.extension === "pdf") {
         try {
-          const buffer = await this.app.vault.readBinary(pdfFile);
+          const buffer = await this.readPdfBinary(pdfFile);
           local = {
             ...(await this.extractLocalPdfMetadata(buffer, paper.originalPdfName || pdfFile.name))
           };
@@ -10035,7 +10035,7 @@ class PaperLibraryPlugin extends Plugin {
       let local = null;
       if (file?.extension === "pdf") {
         try {
-          local = await this.extractLocalPdfMetadata(await this.app.vault.readBinary(file), paper.originalPdfName || file.name);
+          local = await this.extractLocalPdfMetadata(await this.readPdfBinary(file), paper.originalPdfName || file.name);
         } catch (error) {
           console.warn(`Paper Library: metadata repair skipped for ${paper.title}`, error);
         }
@@ -10326,7 +10326,7 @@ class PaperLibraryPlugin extends Plugin {
       try {
         const file = this.app.vault.getAbstractFileByPath(key);
         if (!file) return null;
-        const buffer = await this.app.vault.readBinary(file);
+        const buffer = await this.readPdfBinary(file);
         const metadata = await this.inspectPdfBuffer(buffer);
         metadata.size = file.stat?.size || metadata.size;
         if (item.kind === "primary") paper.pdfMeta = metadata;

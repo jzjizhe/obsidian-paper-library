@@ -5,14 +5,21 @@ import { bytesContainAscii } from "../binary-utils.js";
 
 const writebackMethods = {
   async readPdfBinary(file) {
-    try {
-      return await this.app.vault.readBinary(file);
-    } catch (error) {
-      const permissionDenied = ["EPERM", "EACCES"].includes(error?.code)
-        || /\b(?:EPERM|EACCES)\b/.test(String(error?.message || ""));
-      if (!permissionDenied || typeof this.app.vault.getResourcePath !== "function"
-        || typeof globalThis.fetch !== "function") throw error;
-      // Obsidian's resource URL can remain readable when direct file access is denied.
+    const permissionDenied = (error) => ["EPERM", "EACCES"].includes(error?.code)
+      || /\b(?:EPERM|EACCES)\b/.test(String(error?.message || ""));
+    let lastError = null;
+    // 安全软件扫描新文件时可能短暂锁住文件，先做几次短重试
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.app.vault.readBinary(file);
+      } catch (error) {
+        if (!permissionDenied(error)) throw error;
+        lastError = error;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
+    if (typeof this.app.vault.getResourcePath === "function" && typeof globalThis.fetch === "function") {
+      // Obsidian 的 resource URL 走应用自己的读取通道，direct fs 被安全软件拒绝时仍可能可读
       try {
         const resourcePath = this.app.vault.getResourcePath(file);
         if (!resourcePath) throw new Error("PDF 资源地址为空");
@@ -20,9 +27,13 @@ const writebackMethods = {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.arrayBuffer();
       } catch (resourceError) {
-        throw new Error(`${error.message || error}；Obsidian PDF 资源读取失败：${resourceError.message || resourceError}`, { cause: error });
+        throw new Error(
+          `读取 PDF 被系统拒绝（${lastError?.message || lastError}）；Obsidian 资源读取也失败：${resourceError.message || resourceError}。如果文件被安全软件标记，请稍后重试或联系管理员。`,
+          { cause: lastError }
+        );
       }
     }
+    throw lastError;
   },
 
   isInkMark(mark) {
