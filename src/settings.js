@@ -2,7 +2,12 @@
    依赖 Obsidian 设置 API 与各工具/弹窗模块。 */
 
 import { Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
-import { CANVAS_HIGHLIGHT_COLORS, DEFAULT_SETTINGS } from "./constants.js";
+import {
+  CANVAS_HIGHLIGHT_COLORS,
+  DEFAULT_SETTINGS,
+  TRANSLATION_PROVIDERS,
+  TRANSLATION_TARGETS
+} from "./constants.js";
 import { normalizeCustomAppearanceId } from "./appearance.js";
 import { formatAIFileSize } from "./text-utils.js";
 import { CitationStyleModal, CslImportModal } from "./modals/citation.js";
@@ -770,6 +775,69 @@ class PaperLibrarySettingTab extends PluginSettingTab {
           this.plugin.settings.pdfTextBoxFontSize = value;
           await this.plugin.saveSettings();
         }));
+    containerEl.createEl("h3", { text: "翻译" });
+    new Setting(containerEl)
+      .setName("翻译服务")
+      .setDesc("PDF 选区弹条的「翻译」使用此接口，不经过 AI；选中的文字会发送给所选翻译服务。MyMemory 免费且无需密钥；百度/DeepL 需要填写自己的密钥。")
+      .addDropdown((dropdown) => {
+        TRANSLATION_PROVIDERS.forEach((provider) => dropdown.addOption(provider.id, provider.label));
+        const current = String(this.plugin.settings.translationProvider || "mymemory");
+        dropdown
+          .setValue(TRANSLATION_PROVIDERS.some((provider) => provider.id === current) ? current : "mymemory")
+          .onChange(async (value) => {
+            this.plugin.settings.translationProvider = value;
+            await this.plugin.saveSettings();
+          });
+      });
+    new Setting(containerEl)
+      .setName("翻译目标语言")
+      .setDesc("翻译弹窗默认输出的语言。")
+      .addDropdown((dropdown) => {
+        TRANSLATION_TARGETS.forEach((target) => dropdown.addOption(target.id, target.label));
+        const current = String(this.plugin.settings.translationTargetLanguage || "zh-CN");
+        dropdown
+          .setValue(TRANSLATION_TARGETS.some((target) => target.id === current) ? current : "zh-CN")
+          .onChange(async (value) => {
+            this.plugin.settings.translationTargetLanguage = value;
+            await this.plugin.saveSettings();
+          });
+      });
+    new Setting(containerEl)
+      .setName("百度翻译 APP ID")
+      .setDesc("选择百度翻译时使用。与密钥一起在百度翻译开放平台申请。")
+      .addText((text) => text
+        .setPlaceholder("APP ID")
+        .setValue(this.plugin.settings.baiduTranslateAppId || "")
+        .onChange(async (value) => {
+          this.plugin.settings.baiduTranslateAppId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
+      .setName("百度翻译密钥")
+      .setDesc("只保存在本 Vault 的插件设置中。")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setPlaceholder("密钥")
+          .setValue(this.plugin.settings.baiduTranslateKey || "")
+          .onChange(async (value) => {
+            this.plugin.settings.baiduTranslateKey = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+    new Setting(containerEl)
+      .setName("DeepL API Key")
+      .setDesc("选择 DeepL 时使用；以 :fx 结尾的免费版 Key 会自动使用 api-free 端点。")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setPlaceholder("DeepL API Key")
+          .setValue(this.plugin.settings.deeplTranslateApiKey || "")
+          .onChange(async (value) => {
+            this.plugin.settings.deeplTranslateApiKey = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
     containerEl.createEl("h3", { text: "开发者" });
     new Setting(containerEl)
       .setName("显示调试命令")

@@ -196,6 +196,7 @@ import {
   installPaperLibraryUpdate,
   listPaperLibraryZipEntries
 } from "./services/self-update.js";
+import { chunkText, md5Hex, translateText } from "./translation.js";
 import { PaperResearchWorkspaceView } from "./research-workspace-view.js";
 import { PaperLibraryDetailView, PaperLibraryNavigationView, PaperLibraryView } from "./library-view.js";
 import {
@@ -11473,5 +11474,6 @@ class PaperLibraryPlugin extends Plugin {
 installPdfReaderMethods(PaperLibraryPlugin);
 // Test bundle hook: keeps pdf-lib classes reachable after PDF reader extraction.
 PaperLibraryPlugin.pdfLibForTest = { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFString };
+PaperLibraryPlugin.translationInternals = { chunkText, md5Hex, translateText };
 
 export default PaperLibraryPlugin;

@@ -14969,3 +14969,53 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 .paperlib-native-shape-mode .page {
   touch-action: none;
 }
+
+/* ===== 翻译弹窗 ===== */
+.paperlib-translation-modal .paperlib-translation-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.paperlib-translation-modal .paperlib-translation-loading {
+  color: var(--text-muted);
+}
+
+.paperlib-translation-modal .paperlib-translation-error {
+  color: var(--text-error);
+  white-space: pre-wrap;
+}
+
+.paperlib-translation-modal .paperlib-translation-result {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  user-select: text;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.paperlib-translation-modal .paperlib-translation-original {
+  margin-top: 12px;
+  color: var(--text-muted);
+}
+
+.paperlib-translation-modal .paperlib-translation-original summary {
+  cursor: pointer;
+}
+
+.paperlib-translation-modal .paperlib-translation-original div {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  user-select: text;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.paperlib-translation-modal .paperlib-translation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}

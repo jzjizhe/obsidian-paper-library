@@ -2,6 +2,8 @@ import { CANVAS_HIGHLIGHT_COLORS, PDF_TEXT_COLORS } from "../constants.js";
 import { ClearAnnotationsModal, PdfAnnotationsModal } from "../modals/annotations.js";
 import { Menu, Notice, loadPdfJs, normalizePath, setIcon } from "obsidian";
 import { NativePdfAnnotationModal } from "../modals/misc.js";
+import { TranslationModal } from "../modals/translate.js";
+import { translateText, translationProviderLabel, translationTargetLabel } from "../translation.js";
 import { getPdfFigureCatalog, getPortablePdfFigurePayload, installPdfFigureDragZones, openPdfFigureAtPoint, openPdfFigureGallery } from "../services/pdf-figures.js";
 import { highlighterCursor, setPaperlibIcon } from "../ui-utils.js";
 import { truncate } from "../text-utils.js";
@@ -1234,7 +1236,7 @@ const toolbarMethods = {
       });
     });
     toolbar.createDiv({ cls: "paperlib-pdf-selection-divider" });
-    const addAction = (icon, label, draft) => {
+    const addSelectionAction = (icon, label, handler, options = {}) => {
       const button = toolbar.createEl("button", {
         cls: "paperlib-pdf-selection-action",
         attr: { type: "button", "aria-label": label, title: label }
@@ -1245,30 +1247,42 @@ const toolbarMethods = {
         event.stopPropagation();
         if (!toolbar.isConnected) return;
         try {
-          const context = await this.getNativePdfSelectionContext(leaf, textLayer);
+          const context = await this.getNativePdfSelectionContext(leaf, textLayer, {
+            requirePaper: options.requirePaper !== false
+          });
           this.dismissNativePdfSelectionToolbar();
           selection.removeAllRanges();
           if (!context?.text) return;
-          const file = leaf.view?.file || this.app.workspace.getActiveFile();
-          const paper = this.getPaperForPdfFile(file);
-          await this.addAIContext({
-            type: "selection",
-            label: `${paper?.title || file?.basename || "PDF"} · 第 ${context.page} 页选区`,
-            detail: `${context.text.length} 字符`,
-            text: context.text,
-            path: context.pdfPath || file?.path || "",
-            page: context.page,
-            key: `pdf-selection:${context.pdfPath || file?.path || ""}:${context.page}:${context.text.slice(0, 120)}`
-          }, { draft });
+          await handler(context);
         } catch (error) {
           this.dismissNativePdfSelectionToolbar();
-          console.error("Paper Library: failed to send PDF selection to composer", error);
-          new Notice(`发送失败：${error.message || error}`);
+          console.error(`Paper Library: failed to run PDF selection action ${label}`, error);
+          new Notice(`操作失败：${error.message || error}`);
         }
       });
     };
+    const addAction = (icon, label, draft) => addSelectionAction(icon, label, async (context) => {
+      const file = leaf.view?.file || this.app.workspace.getActiveFile();
+      const paper = this.getPaperForPdfFile(file);
+      await this.addAIContext({
+        type: "selection",
+        label: `${paper?.title || file?.basename || "PDF"} · 第 ${context.page} 页选区`,
+        detail: `${context.text.length} 字符`,
+        text: context.text,
+        path: context.pdfPath || file?.path || "",
+        page: context.page,
+        key: `pdf-selection:${context.pdfPath || file?.path || ""}:${context.page}:${context.text.slice(0, 120)}`
+      }, { draft });
+    });
     addAction("sparkles", "解释", "Explain this passage from the paper in clear terms.");
-    addAction("languages", "翻译", "Translate this passage into Chinese.");
+    addSelectionAction("languages", "翻译", (context) => {
+      new TranslationModal(this.app, {
+        original: context.text,
+        providerLabel: translationProviderLabel(this),
+        targetLabel: translationTargetLabel(this),
+        translate: () => translateText(this, context.text)
+      }).open();
+    }, { requirePaper: false });
     const popup = toolbar.getBoundingClientRect();
     const rect = selectedRange.getBoundingClientRect();
     const viewport = owner.visualViewport;

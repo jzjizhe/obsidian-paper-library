@@ -97,6 +97,11 @@ const DEFAULT_SETTINGS = {
   pdfOpenPosition: "last",
   pdfTextBoxFontSize: 18,
   pdfTextBoxTextColor: "orange",
+  translationProvider: "mymemory",
+  translationTargetLanguage: "zh-CN",
+  baiduTranslateAppId: "",
+  baiduTranslateKey: "",
+  deeplTranslateApiKey: "",
   developerMode: false,
   researchWorkspaceHeading: "Research Workspace",
   defaultHighlightColor: "yellow",
@@ -139,6 +144,19 @@ const DEFAULT_SETTINGS = {
   paperComposerDirectContextBindings: {}
 };
 
+const TRANSLATION_PROVIDERS = [
+  { id: "mymemory", label: "MyMemory（免费，无需密钥）" },
+  { id: "baidu", label: "百度翻译（需要 APP ID 和密钥）" },
+  { id: "deepl", label: "DeepL（需要 API Key）" }
+];
+
+const TRANSLATION_TARGETS = [
+  { id: "zh-CN", label: "简体中文" },
+  { id: "en", label: "English" },
+  { id: "ja", label: "日本語" },
+  { id: "ko", label: "한국어" }
+];
+
 const PDF_TEXT_COLORS = [
   { id: "default", label: "默认", value: "var(--text-normal)" },
   { id: "red", label: "红", value: "#e5534b" },
@@ -171,6 +189,8 @@ export {
   PDF_TEXT_COLORS,
   PAPER_TABLE_COLUMN_META,
   RESEARCH_VIEW_TYPE,
+  TRANSLATION_PROVIDERS,
+  TRANSLATION_TARGETS,
   VIEW_TYPE,
   favoriteColorValue,
   normalizeFavoriteColor
