@@ -14970,52 +14970,60 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   touch-action: none;
 }
 
-/* ===== 翻译弹窗 ===== */
-.paperlib-translation-modal .paperlib-translation-meta {
+/* ===== 翻译小窗口（选区工具栏下方） ===== */
+.paperlib-pdf-translation-popover {
+  position: absolute;
+  z-index: 10001;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  min-width: 180px;
+  max-width: min(440px, calc(100vw - 24px));
+  max-height: 40vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  box-shadow: 0 6px 22px rgb(0 0 0 / 20%);
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.55;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.paperlib-pdf-translation-text {
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.paperlib-pdf-translation-loading,
+.paperlib-pdf-translation-hint {
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.paperlib-translation-modal .paperlib-translation-loading {
-  color: var(--text-muted);
-}
-
-.paperlib-translation-modal .paperlib-translation-error {
+.paperlib-pdf-translation-error {
   color: var(--text-error);
   white-space: pre-wrap;
 }
 
-.paperlib-translation-modal .paperlib-translation-result {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--background-secondary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  user-select: text;
-  max-height: 50vh;
-  overflow: auto;
+.paperlib-pdf-translation-hint {
+  margin-top: 4px;
 }
 
-.paperlib-translation-modal .paperlib-translation-original {
-  margin-top: 12px;
-  color: var(--text-muted);
-}
-
-.paperlib-translation-modal .paperlib-translation-original summary {
-  cursor: pointer;
-}
-
-.paperlib-translation-modal .paperlib-translation-original div {
-  margin-top: 6px;
-  white-space: pre-wrap;
-  user-select: text;
-  max-height: 30vh;
-  overflow: auto;
-}
-
-.paperlib-translation-modal .paperlib-translation-actions {
+.paperlib-pdf-translation-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.paperlib-pdf-translation-actions button {
+  padding: 2px 8px;
+  font-size: 11px;
 }

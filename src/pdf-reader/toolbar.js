@@ -2,8 +2,7 @@ import { CANVAS_HIGHLIGHT_COLORS, PDF_TEXT_COLORS } from "../constants.js";
 import { ClearAnnotationsModal, PdfAnnotationsModal } from "../modals/annotations.js";
 import { Menu, Notice, loadPdfJs, normalizePath, setIcon } from "obsidian";
 import { NativePdfAnnotationModal } from "../modals/misc.js";
-import { TranslationModal } from "../modals/translate.js";
-import { translateText, translationProviderLabel, translationTargetLabel } from "../translation.js";
+import { translateText } from "../translation.js";
 import { getPdfFigureCatalog, getPortablePdfFigurePayload, installPdfFigureDragZones, openPdfFigureAtPoint, openPdfFigureGallery } from "../services/pdf-figures.js";
 import { highlighterCursor, setPaperlibIcon } from "../ui-utils.js";
 import { truncate } from "../text-utils.js";
@@ -1236,6 +1235,7 @@ const toolbarMethods = {
       });
     });
     toolbar.createDiv({ cls: "paperlib-pdf-selection-divider" });
+    let translationPopover = null;
     const addSelectionAction = (icon, label, handler, options = {}) => {
       const button = toolbar.createEl("button", {
         cls: "paperlib-pdf-selection-action",
@@ -1250,8 +1250,10 @@ const toolbarMethods = {
           const context = await this.getNativePdfSelectionContext(leaf, textLayer, {
             requirePaper: options.requirePaper !== false
           });
-          this.dismissNativePdfSelectionToolbar();
-          selection.removeAllRanges();
+          if (!options.keepToolbar) {
+            this.dismissNativePdfSelectionToolbar();
+            selection.removeAllRanges();
+          }
           if (!context?.text) return;
           await handler(context);
         } catch (error) {
@@ -1276,13 +1278,54 @@ const toolbarMethods = {
     });
     addAction("sparkles", "解释", "Explain this passage from the paper in clear terms.");
     addSelectionAction("languages", "翻译", (context) => {
-      new TranslationModal(this.app, {
-        original: context.text,
-        providerLabel: translationProviderLabel(this),
-        targetLabel: translationTargetLabel(this),
-        translate: () => translateText(this, context.text)
-      }).open();
-    }, { requirePaper: false });
+      translationPopover?.remove?.();
+      const popover = toolbar.createDiv({ cls: "paperlib-pdf-translation-popover" });
+      translationPopover = popover;
+      // 允许在译文里拖选、复制，不触发工具栏的 pointerdown 拦截
+      popover.addEventListener("pointerdown", (event) => event.stopPropagation());
+      const loading = popover.createDiv({ cls: "paperlib-pdf-translation-loading", text: "翻译中…" });
+      const position = () => {
+        if (!popover.isConnected) return;
+        popover.style.top = "";
+        popover.style.bottom = "";
+        popover.style.transform = "translateX(-50%)";
+        const toolbarRect = toolbar.getBoundingClientRect();
+        const rect = popover.getBoundingClientRect();
+        let delta = 0;
+        if (rect.right > owner.innerWidth - 8) delta = owner.innerWidth - 8 - rect.right;
+        if (rect.left + delta < 8) delta = 8 - rect.left;
+        popover.style.transform = `translateX(calc(-50% + ${delta}px))`;
+        if (toolbarRect.bottom + rect.height + 8 > owner.innerHeight) {
+          popover.style.top = "auto";
+          popover.style.bottom = "calc(100% + 8px)";
+        }
+      };
+      requestAnimationFrame(position);
+      void translateText(this, context.text).then((translation) => {
+        if (!popover.isConnected) return;
+        popover.empty();
+        popover.createDiv({ cls: "paperlib-pdf-translation-text", text: translation });
+        const actions = popover.createDiv({ cls: "paperlib-pdf-translation-actions" });
+        const copy = actions.createEl("button", { text: "复制", attr: { type: "button" } });
+        copy.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            await navigator.clipboard.writeText(translation);
+            new Notice("译文已复制");
+          } catch (error) {
+            new Notice(`复制失败：${error.message || error}`);
+          }
+        });
+        requestAnimationFrame(position);
+      }).catch((error) => {
+        if (!popover.isConnected) return;
+        popover.empty();
+        popover.createDiv({ cls: "paperlib-pdf-translation-error", text: String(error.message || error) });
+        popover.createDiv({ cls: "paperlib-pdf-translation-hint", text: "可在设置 → 翻译中检查服务配置。" });
+        requestAnimationFrame(position);
+      });
+    }, { requirePaper: false, keepToolbar: true });
     const popup = toolbar.getBoundingClientRect();
     const rect = selectedRange.getBoundingClientRect();
     const viewport = owner.visualViewport;
@@ -1297,6 +1340,13 @@ const toolbarMethods = {
     const dismiss = () => this.dismissNativePdfSelectionToolbar();
     const outside = (event) => { if (!toolbar.contains(event.target)) dismiss(); };
     const keydown = (event) => {
+      const insideTranslation = (node) => {
+        const element = node?.nodeType === 3 ? node.parentElement : node;
+        return Boolean(element && translationPopover?.contains?.(element));
+      };
+      // 在译文小窗口里用 Cmd/Ctrl+C 复制时不要关闭窗口
+      if ((event.metaKey || event.ctrlKey)
+        && (insideTranslation(selection?.anchorNode) || insideTranslation(selection?.focusNode))) return;
       if (event.key === "Escape" || event.metaKey || event.ctrlKey) { dismiss(); return; }
       // 数字键 1-5 快速选择对应颜色
       const index = Number.parseInt(event.key, 10) - 1;
@@ -1307,6 +1357,12 @@ const toolbarMethods = {
       }
     };
     const selectionChanged = () => {
+      const insideTranslation = (node) => {
+        const element = node?.nodeType === 3 ? node.parentElement : node;
+        return Boolean(element && translationPopover?.contains?.(element));
+      };
+      // 在译文小窗口里拖选/复制不应关闭翻译
+      if (insideTranslation(selection.anchorNode) || insideTranslation(selection.focusNode)) return;
       if (!selection.rangeCount || selection.isCollapsed) { dismiss(); return; }
       const range = selection.getRangeAt(0);
       if (range.compareBoundaryPoints(0, selectedRange) || range.compareBoundaryPoints(2, selectedRange)) dismiss();
@@ -1321,6 +1377,7 @@ const toolbarMethods = {
     viewport?.addEventListener("scroll", dismiss);
     const leafChange = this.app.workspace?.on?.("active-leaf-change", dismiss);
     this.nativeSelectionToolbarCleanup = () => {
+      translationPopover = null;
       toolbar.remove();
       doc.removeEventListener("pointerdown", outside, true);
       doc.removeEventListener("keydown", keydown, true);

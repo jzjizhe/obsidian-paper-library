@@ -791,7 +791,7 @@ class PaperLibrarySettingTab extends PluginSettingTab {
       });
     new Setting(containerEl)
       .setName("翻译目标语言")
-      .setDesc("翻译弹窗默认输出的语言。")
+      .setDesc("翻译小窗口默认输出的语言。")
       .addDropdown((dropdown) => {
         TRANSLATION_TARGETS.forEach((target) => dropdown.addOption(target.id, target.label));
         const current = String(this.plugin.settings.translationTargetLanguage || "zh-CN");
