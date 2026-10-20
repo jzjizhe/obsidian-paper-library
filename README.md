@@ -14,7 +14,7 @@
 >
 > 本 Fork 主要增加了原生 PDF 阅读器的标注增强（撤销/重做、画笔/形状写回、文本框修复等），并把阅读器代码拆分到独立模块。插件自更新检查指向本 Fork 的 Releases。
 
-[![Version](https://img.shields.io/badge/version-0.43.1-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
+[![Version](https://img.shields.io/badge/version-0.43.2-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.5%2B-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![Platforms](https://img.shields.io/badge/platforms-desktop%20%7C%20mobile-24415e?style=flat-square)](#平台支持)
 [![License](https://img.shields.io/badge/license-MIT-2f7a61?style=flat-square)](LICENSE)
