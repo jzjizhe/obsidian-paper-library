@@ -12,9 +12,9 @@
 >
 > 这是 [Lyle-xub/obsidian-paper-library](https://github.com/Lyle-xub/obsidian-paper-library) 的社区 Fork，由 [jzjizhe](https://github.com/jzjizhe) 维护。原项目及版权归 © 2026 Lyle 所有；本 Fork 的修改不代表原作者的观点，也未获得原作者的官方背书。
 >
-> 本 Fork 主要增加了原生 PDF 阅读器的标注增强（撤销/重做、画笔/形状写回、文本框修复等），并把阅读器代码拆分到独立模块。插件自更新检查指向本 Fork 的 Releases。
+> 本 Fork 主要增加了原生 PDF 阅读器的标注增强（撤销/重做、画笔/形状写回、文本框修复等）与选中文字的 API 翻译，并把阅读器代码拆分到独立模块。插件自更新检查指向本 Fork 的 Releases。
 
-[![Version](https://img.shields.io/badge/version-0.43.2-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
+[![Version](https://img.shields.io/badge/version-0.43.3-2563d8?style=flat-square)](https://github.com/jzjizhe/obsidian-paper-library/releases)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.5%2B-7c3aed?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![Platforms](https://img.shields.io/badge/platforms-desktop%20%7C%20mobile-24415e?style=flat-square)](#平台支持)
 [![License](https://img.shields.io/badge/license-MIT-2f7a61?style=flat-square)](LICENSE)
@@ -67,6 +67,7 @@ Paper Library 将资料库、阅读器、可视化研究空间和智能对话整
 - 将原文选区拖成摘录卡，也可创建想法卡和主题卡。
 - 卡片四边均可建立连接，支持移动、缩放、搜索和自动整理。
 - 荧光笔与自由画笔实时显示；研究空间与 Obsidian 原生阅读器共用同一份标注数据。
+- 原生阅读器选中文字即可高亮或下划线，也可直接用「解释」提问，或在工具栏下方查看翻译服务的译文。
 - 标注、笔迹、卡片和来源链接会随论文重命名或目录调整自动迁移。
 - 识别论文中的图片并提供目录、轮播、缩放、全屏、图注与 PNG 下载。
 - 研究结果同步写入论文 Markdown 笔记，便于搜索、引用和长期保存。
