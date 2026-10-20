@@ -571,6 +571,7 @@ function testWorkspaceSelectionPopupPosition() {
     for (const rect of [
       { left: -100, right: -20, top: 10, bottom: 30 },
       { left: 500, right: 600, top: 210, bottom: 230 },
+      { left: 100, right: 200, top: 80, bottom: 100 },
       { left: 100, right: 200, top: 140, bottom: 160 }
     ]) {
       const f = selectionPopupFixture();
@@ -585,8 +586,9 @@ function testWorkspaceSelectionPopupPosition() {
         "popup must remain inside the compact viewport horizontally");
       assert.ok(y >= bounds.offsetTop + 8 && y + 36 <= bounds.offsetTop + bounds.height - 8,
         "popup must remain inside the compact viewport vertically");
-      if (!visual && rect.top === 10) assert.equal(y, rect.bottom + 8, "popup must flip below a selection near the top");
-      if (!visual && rect.top === 140) assert.equal(y, rect.top - 36 - 8, "popup should prefer above the selection");
+      if (!visual && rect.top === 10) assert.equal(y, rect.bottom + 8, "popup must stay below a selection near the top");
+      if (!visual && rect.top === 80) assert.equal(y, rect.bottom + 8, "popup should default below the selection");
+      if (!visual && rect.top === 140) assert.equal(y, rect.top - 36 - 8, "popup must flip above when there is no room below");
       f.view.dismissWorkspacePdfSelectionToolbar();
     }
   }

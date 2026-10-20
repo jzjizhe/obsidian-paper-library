@@ -978,7 +978,9 @@ class PaperResearchWorkspaceView extends ItemView {
     const right = left + (viewport?.width || owner.innerWidth);
     const bottom = top + (viewport?.height || owner.innerHeight);
     const x = Math.min(right - popup.width - 8, Math.max(left + 8, (rect.left + rect.right - popup.width) / 2));
-    const y = rect.top - popup.height - 8 >= top + 8 ? rect.top - popup.height - 8 : rect.bottom + 8;
+    const below = rect.bottom + 8;
+    const above = rect.top - popup.height - 8;
+    const y = below + popup.height <= bottom - 8 ? below : above;
     toolbar.style.left = `${Math.max(left + 8, x)}px`;
     toolbar.style.top = `${Math.max(top + 8, Math.min(bottom - popup.height - 8, y))}px`;
     const dismiss = () => this.dismissWorkspacePdfSelectionToolbar();
