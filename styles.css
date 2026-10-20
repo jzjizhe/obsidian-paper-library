@@ -8952,7 +8952,7 @@ button.paperlib-file-open {
 .paperlib-pdf-selection-divider {
   width: 1px;
   align-self: stretch;
-  margin: 2px 2px;
+  margin: 1px;
   background: var(--background-modifier-border);
 }
 
@@ -8960,11 +8960,11 @@ button.paperlib-file-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -8976,8 +8976,8 @@ button.paperlib-file-open {
 }
 
 .paperlib-pdf-selection-action .svg-icon {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .paperlib-annotations-list {
@@ -9097,12 +9097,12 @@ button.paperlib-file-open {
   z-index: 10000;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
+  border-radius: 9px;
   background: var(--background-primary);
-  box-shadow: 0 4px 18px rgb(0 0 0 / 20%);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 18%);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -9110,21 +9110,21 @@ button.paperlib-file-open {
 .paperlib-pdf-selection-toolbar .paperlib-pdf-selection-color {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   min-width: 0;
   min-height: 0;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 5px;
   background: transparent;
   box-shadow: none;
   cursor: pointer;
 }
 
 .paperlib-pdf-selection-color::before {
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   border: 1px solid rgb(0 0 0 / 12%);
   border-radius: 50%;
   background: var(--swatch-color);
@@ -15016,14 +15016,3 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
   margin-top: 4px;
 }
 
-.paperlib-pdf-translation-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.paperlib-pdf-translation-actions button {
-  padding: 2px 8px;
-  font-size: 11px;
-}

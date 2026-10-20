@@ -1305,18 +1305,6 @@ const toolbarMethods = {
         if (!popover.isConnected) return;
         popover.empty();
         popover.createDiv({ cls: "paperlib-pdf-translation-text", text: translation });
-        const actions = popover.createDiv({ cls: "paperlib-pdf-translation-actions" });
-        const copy = actions.createEl("button", { text: "复制", attr: { type: "button" } });
-        copy.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          try {
-            await navigator.clipboard.writeText(translation);
-            new Notice("译文已复制");
-          } catch (error) {
-            new Notice(`复制失败：${error.message || error}`);
-          }
-        });
         requestAnimationFrame(position);
       }).catch((error) => {
         if (!popover.isConnected) return;
