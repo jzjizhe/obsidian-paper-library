@@ -1295,9 +1295,9 @@ const toolbarMethods = {
         if (rect.right > owner.innerWidth - 8) delta = owner.innerWidth - 8 - rect.right;
         if (rect.left + delta < 8) delta = 8 - rect.left;
         popover.style.transform = `translateX(calc(-50% + ${delta}px))`;
-        if (toolbarRect.bottom + rect.height + 8 > owner.innerHeight) {
+        if (toolbarRect.bottom + rect.height + 4 > owner.innerHeight) {
           popover.style.top = "auto";
-          popover.style.bottom = "calc(100% + 8px)";
+          popover.style.bottom = "calc(100% + 4px)";
         }
       };
       requestAnimationFrame(position);

@@ -14974,7 +14974,7 @@ body.paperlib-paperglass-active .paperlib-sidebar-title button {
 .paperlib-pdf-translation-popover {
   position: absolute;
   z-index: 10001;
-  top: calc(100% + 8px);
+  top: calc(100% + 4px);
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
